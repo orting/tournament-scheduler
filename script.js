@@ -810,76 +810,64 @@ function renderKnockout() {
   // Keep propagation current
   propagateKnockoutWinners(state.knockout);
 
-  bHost.className = "stack";
+  bHost.className = "bracket-classic";
   bHost.innerHTML = "";
 
   state.knockout.rounds.forEach((round, rIdx) => {
-    const card = document.createElement("div");
-    card.className = "bracket-round";
-    card.innerHTML = `<h3>Round ${rIdx + 1}</h3>`;
+    const col = document.createElement("div");
+    col.className = "bracket-round";
+
+    col.innerHTML = `<h3 class="bracket-round-heading">Round ${rIdx + 1}</h3>`;
 
     round.forEach((m) => {
       const row = document.createElement("div");
       row.className = "match";
 
-      // Display labels (seed-based) by default
       const aLabel = m.aSeed ? seedOrFlowLabel(state.knockout, m.aSeed) : "BYE";
       const bLabel = m.bSeed ? seedOrFlowLabel(state.knockout, m.bSeed) : "BYE";
 
       const aPid = competitorPid(state.knockout, m.aSeed);
       const bPid = competitorPid(state.knockout, m.bSeed);
 
-      // "Group decided" rule:
-      // show real name only if that seed is a real seedRef AND its group is decided,
-      // or if it comes from a previous match winner (then show pid name if winner exists)
-      const aDisplay = aPid ? participantName(aPid) : null;
-      const bDisplay = bPid ? participantName(bPid) : null;
-
       const names = document.createElement("div");
       names.className = "names";
-
-      // main line: seed/flow labels
-      names.innerHTML = `<strong>${escapeHtml(aLabel)}</strong> <span class="vs">vs</span> <strong>${escapeHtml(bLabel)}</strong>`;
+      names.innerHTML = `
+        <strong>${escapeHtml(aLabel)}</strong>
+        <span class="vs">vs</span>
+        <strong>${escapeHtml(bLabel)}</strong>
+      `;
       row.appendChild(names);
 
-      // secondary line: actual participants when known
       const sub = document.createElement("div");
       sub.className = "muted";
-      sub.style.fontSize = "13px";
-      sub.style.marginTop = "6px";
+      sub.style.fontSize = "12px";
       sub.textContent =
-        (aDisplay || bDisplay)
-          ? `${aDisplay ?? "TBD"} vs ${bDisplay ?? "TBD"}`
+        aPid || bPid
+          ? `${aPid ? participantName(aPid) : "TBD"} vs ${bPid ? participantName(bPid) : "TBD"}`
           : "Participants TBD";
       row.appendChild(sub);
 
       const select = document.createElement("select");
       select.appendChild(new Option("Winner…", ""));
-
       if (aPid) select.appendChild(new Option(participantName(aPid), aPid));
       if (bPid) select.appendChild(new Option(participantName(bPid), bPid));
 
-      // Enable ONLY when both participants are known
       select.disabled = !(aPid && bPid);
-
       select.value = m.winnerPid ?? "";
 
       select.addEventListener("change", (e) => {
-        const val = String(e.target.value || "");
-        m.winnerPid = val ? val : null;
-
+        m.winnerPid = e.target.value || null;
         propagateKnockoutWinners(state.knockout);
-
         saveState();
         renderKnockout();
       });
 
       row.appendChild(select);
-      card.appendChild(row);
+      col.appendChild(row);
     });
 
-    bHost.appendChild(card);
-  });
+    bHost.appendChild(col);
+  });    
 
   // Champion
   const lastRound = state.knockout.rounds[state.knockout.rounds.length - 1];

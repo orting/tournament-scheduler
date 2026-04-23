@@ -117,12 +117,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .match .names { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 .vs { opacity: 0.8; }
 
-.bracket-round {
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 12px;
+
+/* Fix grid alignment for bracket round headings */
+.bracket-round-heading {
+  grid-column: 1 / -1; /* span all columns */
+  margin: 0 0 6px 0;
+  font-size: 16px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+
 }
-.bracket-round h3 { margin: 0 0 10px 0; font-size: 16px; }
 
 .footer { margin-top: 18px; font-size: 13px; }
 
@@ -234,4 +238,60 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-size: 15px;  
   padding-bottom: 6px;
   border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+
+/* ===== Classic bracket layout ===== */
+
+#bracketView {
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.bracket-classic {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(260px, 1fr);
+  gap: 24px;
+}
+
+.bracket-round {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-right: 12px;
+}
+
+.bracket-round-heading {
+  text-align: center;
+  font-weight: 600;
+  font-size: 15px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+/* Match cards in classic bracket */
+.bracket-round .match {
+  padding: 8px 10px;
+  font-size: 13px;
+  min-height: 64px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+/* Slightly tighter selects */
+.bracket-round select {
+  margin-top: 6px;
+  padding: 4px 6px;
+  font-size: 13px;
+}
+
+.bracket-round:not(:first-child) .match {
+  margin-top: 24px;
+}
+
+.bracket-round:last-child .match {
+  font-weight: 600;
+  border-color: rgba(255,255,255,0.25);
 }
