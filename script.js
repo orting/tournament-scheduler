@@ -56,6 +56,80 @@ function escapeHtml(str) {
     .replaceAll("'", "&#039;");
 }
 
+let _bracketLinesInitialized = false;
+
+function drawBracketConnectors() {
+  if (!state.knockout) return;
+
+  const canvas = document.getElementById("bracketCanvas");
+  if (!canvas) return;
+
+  const svg = canvas.querySelector("svg.bracket-lines");
+  if (!svg) return;
+
+  // Make sure SVG matches the content size (not just the visible viewport)
+  const w = canvas.scrollWidth;
+  const h = canvas.scrollHeight;
+
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", h);
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.innerHTML = "";
+
+  const canvasRect = canvas.getBoundingClientRect();
+
+  // DOM lookup: matchId -> element
+  const matchEls = [...canvas.querySelectorAll("[data-match-id]")];
+  const elById = new Map(matchEls.map(el => [el.dataset.matchId, el]));
+
+  // Build mapping from prevMatchId -> nextMatchId (from your knockout model)
+  // nextRoundMatch.aSeed / bSeed are {fromMatchId: "..."} per your code.
+  const ko = state.knockout;
+
+  for (let r = 0; r < ko.rounds.length - 1; r++) {
+    const nextRound = ko.rounds[r + 1];
+
+    for (const next of nextRound) {
+      for (const sideKey of ["aSeed", "bSeed"]) {
+        const side = next[sideKey];
+        if (!side || !side.fromMatchId) continue;
+
+        const prevId = side.fromMatchId;
+        const nextId = next.id;
+
+        const prevEl = elById.get(prevId);
+        const nextEl = elById.get(nextId);
+        if (!prevEl || !nextEl) continue;
+
+        const p = prevEl.getBoundingClientRect();
+        const n = nextEl.getBoundingClientRect();
+
+        // points relative to canvas (so scrolling doesn't break alignment)
+        const px = p.right - canvasRect.left;
+        const py = p.top - canvasRect.top + p.height / 2;
+
+        const nx = n.left - canvasRect.left;
+        const ny = n.top - canvasRect.top + n.height / 2;
+
+        const midX = (px + nx) / 2;
+
+        // Draw an elbow connector: right-center -> midX -> next left-center
+        const d = `M ${px} ${py} L ${midX} ${py} L ${midX} ${ny} L ${nx} ${ny}`;
+
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", d);
+        svg.appendChild(path);
+      }
+    }
+  }
+
+  // Initialize resize handler once
+  if (!_bracketLinesInitialized) {
+    _bracketLinesInitialized = true;
+    window.addEventListener("resize", () => requestAnimationFrame(drawBracketConnectors));
+  }
+}
+
 /* -----------------------------
    State
 ----------------------------- */
@@ -810,9 +884,25 @@ function renderKnockout() {
   // Keep propagation current
   propagateKnockoutWinners(state.knockout);
 
-  bHost.className = "bracket-classic";
+  bHost.className = "";       // bracketView itself stays a normal container
   bHost.innerHTML = "";
 
+  // Canvas holds both SVG lines and the bracket columns so they scroll together
+  const canvas = document.createElement("div");
+  canvas.className = "bracket-canvas";
+  canvas.id = "bracketCanvas";
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("bracket-lines");
+
+  const grid = document.createElement("div");
+  grid.className = "bracket-classic";
+
+  // order matters: svg behind, grid in front
+  canvas.appendChild(svg);
+  canvas.appendChild(grid);
+  bHost.appendChild(canvas);
+    
   state.knockout.rounds.forEach((round, rIdx) => {
     const col = document.createElement("div");
     col.className = "bracket-round";
@@ -822,6 +912,7 @@ function renderKnockout() {
     round.forEach((m) => {
       const row = document.createElement("div");
       row.className = "match";
+      row.dataset.matchId = m.id;
 
       const aLabel = m.aSeed ? seedOrFlowLabel(state.knockout, m.aSeed) : "BYE";
       const bLabel = m.bSeed ? seedOrFlowLabel(state.knockout, m.bSeed) : "BYE";
@@ -866,7 +957,7 @@ function renderKnockout() {
       col.appendChild(row);
     });
 
-    bHost.appendChild(col);
+    grid.appendChild(col);
   });    
 
   // Champion
@@ -878,6 +969,7 @@ function renderKnockout() {
     champ.innerHTML = `<h3>🏆 Champion: ${escapeHtml(participantName(final.winnerPid))}</h3>`;
     bHost.appendChild(champ);
   }
+  requestAnimationFrame(drawBracketConnectors);
 }
 
 function renderButtons() {

@@ -117,17 +117,6 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .match .names { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 .vs { opacity: 0.8; }
 
-
-/* Fix grid alignment for bracket round headings */
-.bracket-round-heading {
-  grid-column: 1 / -1; /* span all columns */
-  margin: 0 0 6px 0;
-  font-size: 16px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-
-}
-
 .footer { margin-top: 18px; font-size: 13px; }
 
 
@@ -294,4 +283,38 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .bracket-round:last-child .match {
   font-weight: 600;
   border-color: rgba(255,255,255,0.25);
+}
+
+
+
+/*  === Bracket connectors layer === */
+
+.bracket-canvas {
+  position: relative;
+  width: max-content; /* expands to fit bracket columns */
+}
+
+.bracket-lines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0; /* behind match cards */
+}
+
+.bracket-classic {
+  position: relative;
+  z-index: 1; /* above lines */
+}
+
+/* Optional: ensure cards sit above lines */
+.bracket-round .match {
+  position: relative;
+  z-index: 2;
+}
+
+/* Line style */
+.bracket-lines path {
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 2;
+  fill: none;
 }
