@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Tournament Groups & Bracket</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="container">
+    <header class="header">
+      <h1>Tournament Builder</h1>
+      <p class="muted">Groups → round-robin → qualifiers → knockout bracket</p>
+      <div class="header-actions">
+        <button id="resetBtn" class="secondary">Reset</button>
+        <button id="saveBtn" class="secondary">Save</button>
+      </div>
+    </header>
+
+    <!-- STEP 1–4: Setup -->
+    <section class="card">
+      <h2>Setup</h2>
+
+      <div class="grid">
+        <label>
+          Number of participants
+          <input id="participantCount" type="number" min="2" value="8" />
+        </label>
+
+        <label>
+          Number of groups
+          <input id="groupCount" type="number" min="1" value="2" />
+        </label>
+
+        <label>
+          Qualifiers to knockout (total)
+          <input id="qualifierCount" type="number" min="2" value="4" />
+        </label>
+      </div>
+
+      <div class="row">
+        <button id="buildParticipantsBtn">1) Create Participants</button>
+        <button id="assignGroupsBtn" disabled>2) Randomize Groups</button>
+        <button id="makeMatchesBtn" disabled>3) Create Group Matces</button>
+        <button id="makeBracketBtn" disabled>4) Create Knockout Bracket</button>
+      </div>
+    </section>
+
+    <!-- PARTICIPANTS -->
+    <section class="card accordion" data-open="true">
+	<button class="accordion-header">
+	  <span class="arrow">▶</span>
+	  <span>Participants</span>
+	</button>
+	<div class="accordion-body" id="participantEditor">
+          <div id="participantInputs" class="participant-inputs"></div>
+	</div>
+	</section>
+    </section>
+
+    <!-- GROUPS -->
+    <section class="card accordion" data-open="true">
+      <button class="accordion-header">
+	<span class="arrow">▶</span>
+	<span>Groups</span>
+      </button>
+      <div class="accordion-body">
+	<div id="groupsView"></div>
+      </div>
+    </section>
+
+    <!-- GROUP MATCHES -->
+    <section class="card accordion" data-open="true">
+      <button class="accordion-header">
+	<span class="arrow">▶</span>
+	<span>Group Matches</span>
+      </button>
+      <div class="accordion-body">
+	<div id="groupMatchesView">
+	  No matches yet.
+	</div>
+      </div>
+    </section>
+
+    <!-- QUALIFIERS + BRACKET -->
+    <section class="card accordion" data-open="true">
+      <button class="accordion-header">
+	<span class="arrow">▶</span>
+	<span>Knockout Bracket</span>
+      </button>
+      <div class="accordion-body">
+	<div id="qualifiersView"></div>
+	<div id="bracketView"></div>
+      </div>
+    </section>
+
+    <footer class="footer muted">
+      Tip: Click “Save” after setup; results auto-save on change if you want (easy to add).
+    </footer>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
