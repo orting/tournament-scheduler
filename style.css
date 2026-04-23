@@ -318,3 +318,47 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   stroke-width: 2;
   fill: none;
 }
+
+
+/* Container that holds matches inside each round */
+.round-matches {
+  position: relative;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.bracket-round[data-round="0"] .round-matches .match {
+  position: relative;
+}
+
+.bracket-round[data-round]:not([data-round="0"]) .round-matches .match {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+/* Establish a vertical rhythm for Round 1 */
+.bracket-round[data-round="0"] .round-matches {
+  display: flex;
+  flex-direction: column;
+  gap: 24px; /* ← this is the critical value */
+}
+
+.bracket-round[data-round]:not([data-round="0"]) .round-matches {
+    display: block;
+}
+
+/* IMPORTANT: normalize bracket heading geometry */
+.bracket-round-heading {
+  margin: 0;               /* kill default h3 margin */
+  padding: 4px 0 6px 0;    /* explicit, controlled spacing */
+  line-height: 1.2;
+}
+
+.bracket-round {
+  padding-top: 0;          /* ensure consistent origin */
+}
+
+.round-matches {
+  margin-top: 12px;        /* single, intentional offset below heading */
+}

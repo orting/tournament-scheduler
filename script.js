@@ -126,7 +126,117 @@ function drawBracketConnectors() {
   // Initialize resize handler once
   if (!_bracketLinesInitialized) {
     _bracketLinesInitialized = true;
-    window.addEventListener("resize", () => requestAnimationFrame(drawBracketConnectors));
+    window.addEventListener("resize", () => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          alignBracketMatches();
+          drawBracketConnectors()
+        });
+      });
+    });
+  }
+}
+
+function alignBracketMatches() {
+  const canvas = document.getElementById("bracketCanvas");
+  if (!canvas) return;
+
+  const roundWraps = [...canvas.querySelectorAll(".round-matches")]
+    .sort((a, b) => Number(a.dataset.round) - Number(b.dataset.round));
+  if (roundWraps.length === 0) return;
+
+  const getMatches = (wrap) =>
+    [...wrap.querySelectorAll(".match")]
+      .sort((a, b) => Number(a.dataset.matchIndex) - Number(b.dataset.matchIndex));
+
+  const canvasRect = canvas.getBoundingClientRect();
+
+  // Reset tops for later rounds before measuring
+  for (let r = 1; r < roundWraps.length; r++) {
+    for (const el of getMatches(roundWraps[r])) el.style.top = "0px";
+  }
+
+  // Round 0 baseline centers in CANVAS coordinates
+  const baseWrap = roundWraps[0];
+  const baseMatches = getMatches(baseWrap);
+  if (baseMatches.length === 0) return;
+
+  // Height baseline (includes flex gap if round 0 uses it)
+  const baseHeight = baseWrap.scrollHeight;
+  for (const wrap of roundWraps) wrap.style.minHeight = baseHeight + "px";
+
+  let prevCentersCanvas = baseMatches.map((el) => {
+    const r = el.getBoundingClientRect();
+    return (r.top - canvasRect.top) + (r.height / 2);
+  });
+
+  // Helper: median (robust against outliers)
+  function median(nums) {
+    if (!nums.length) return 0;
+    const a = [...nums].sort((x, y) => x - y);
+    const mid = Math.floor(a.length / 2);
+    return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+  }
+
+  // Position each subsequent round using CANVAS coordinates + auto-calibration
+  for (let r = 1; r < roundWraps.length; r++) {
+    const wrap = roundWraps[r];
+    const matches = getMatches(wrap);
+
+    const wrapRect = wrap.getBoundingClientRect();
+
+    // Top of the ABSOLUTE POSITIONING ORIGIN in canvas coords.
+    // top=0 for abs children is the padding edge, so subtract border (clientTop) but not padding.
+    const wrapOriginCanvas = (wrapRect.top - canvasRect.top) + wrap.clientTop;
+
+    // First pass: place using computed desired centers
+    const desiredCenters = []; // per match i
+    for (let i = 0; i < matches.length; i++) {
+      const el = matches[i];
+
+      const p1 = prevCentersCanvas[i * 2];
+      const p2 = prevCentersCanvas[i * 2 + 1];
+      if (p1 == null || p2 == null) {
+        desiredCenters.push(null);
+        continue;
+      }
+
+      const desiredCenterCanvas = (p1 + p2) / 2;
+      desiredCenters.push(desiredCenterCanvas);
+
+      const h = el.getBoundingClientRect().height;
+      const topWithinWrap = desiredCenterCanvas - wrapOriginCanvas - (h / 2);
+
+      el.style.top = `${topWithinWrap}px`;
+    }
+
+    // Second pass: measure actual centers and compute the constant delta for this round
+    const deltas = [];
+    for (let i = 0; i < matches.length; i++) {
+      const target = desiredCenters[i];
+      if (target == null) continue;
+
+      const rr = matches[i].getBoundingClientRect();
+      const actualCenterCanvas = (rr.top - canvasRect.top) + (rr.height / 2);
+
+      deltas.push(actualCenterCanvas - target);
+    }
+
+    // If everything is consistently off, this delta corrects it
+    const roundDelta = median(deltas);
+
+    if (roundDelta !== 0) {
+      for (const el of matches) {
+        const curTop = parseFloat(el.style.top || "0");
+        el.style.top = `${curTop - roundDelta}px`;
+      }
+    }
+
+    // Recompute this round’s centers in CANVAS coords after calibration
+    prevCentersCanvas = matches.map((el) => {
+      const rr = el.getBoundingClientRect();
+      return (rr.top - canvasRect.top) + (rr.height / 2);
+    });
   }
 }
 
@@ -902,17 +1012,23 @@ function renderKnockout() {
   canvas.appendChild(svg);
   canvas.appendChild(grid);
   bHost.appendChild(canvas);
-    
+
   state.knockout.rounds.forEach((round, rIdx) => {
     const col = document.createElement("div");
     col.className = "bracket-round";
+    col.dataset.round = String(rIdx);
 
     col.innerHTML = `<h3 class="bracket-round-heading">Round ${rIdx + 1}</h3>`;
 
-    round.forEach((m) => {
+    const matchesWrap = document.createElement("div");
+    matchesWrap.className = "round-matches";
+    matchesWrap.dataset.round = String(rIdx);
+
+    round.forEach((m, i) => {
       const row = document.createElement("div");
       row.className = "match";
       row.dataset.matchId = m.id;
+      row.dataset.matchIndex = String(i);
 
       const aLabel = m.aSeed ? seedOrFlowLabel(state.knockout, m.aSeed) : "BYE";
       const bLabel = m.bSeed ? seedOrFlowLabel(state.knockout, m.bSeed) : "BYE";
@@ -953,12 +1069,12 @@ function renderKnockout() {
         renderKnockout();
       });
 
-      row.appendChild(select);
-      col.appendChild(row);
+      matchesWrap.appendChild(row);
     });
 
+    col.appendChild(matchesWrap);
     grid.appendChild(col);
-  });    
+  });
 
   // Champion
   const lastRound = state.knockout.rounds[state.knockout.rounds.length - 1];
@@ -969,7 +1085,12 @@ function renderKnockout() {
     champ.innerHTML = `<h3>🏆 Champion: ${escapeHtml(participantName(final.winnerPid))}</h3>`;
     bHost.appendChild(champ);
   }
-  requestAnimationFrame(drawBracketConnectors);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      alignBracketMatches();
+      drawBracketConnectors();
+    });
+  });
 }
 
 function renderButtons() {
@@ -978,10 +1099,6 @@ function renderButtons() {
   const bracketBtn = $("makeBracketBtn");
 
   if (assignBtn) assignBtn.disabled = state.participants.length === 0;
-
-  // These buttons are now optional / legacy because we auto-build:
-  if (matchesBtn) matchesBtn.disabled = state.groups.length === 0;
-  if (bracketBtn) bracketBtn.disabled = state.groups.length === 0;
 }
 
 function renderAll() {
