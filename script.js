@@ -166,15 +166,106 @@ function groupRanking(groupId) {
     };
   });
 
-  // Sort: points desc, wins desc, losses asc, name
-  rows.sort((a, b) =>
-    (b.points - a.points) ||
-    (b.wins - a.wins) ||
-    (a.losses - b.losses) ||
-    a.name.localeCompare(b.name)
-  );
+  // Sort: points desc,H2H,  wins desc, losses asc, name
+  rows.sort((a, b) => {
+    // Primary: points
+    if (b.points !== a.points) return b.points - a.points;
+
+    // Head-to-head (only meaningful if both have same points)
+    const h2h = headToHeadWinner(a.pid, b.pid, groupId);
+    if (h2h === a.pid) return -1;
+    if (h2h === b.pid) return 1;
+
+    // Fallbacks
+    if (b.wins !== a.wins) return b.wins - a.wins;
+    if (a.losses !== b.losses) return a.losses - b.losses;
+
+    return a.name.localeCompare(b.name);
+  });
 
   return rows;
+}
+
+/**
+ * For a group, compute remaining matches per player.
+ */
+function remainingMatchesByPlayer(groupId) {
+  const g = state.groups.find(x => x.id === groupId);
+  if (!g) return new Map();
+
+  const remaining = new Map();
+  g.memberIds.forEach(pid => remaining.set(pid, 0));
+
+  const matches = state.groupMatches.filter(m => m.groupId === groupId);
+  for (const m of matches) {
+    if (!m.winnerId) {
+      remaining.set(m.aId, remaining.get(m.aId) + 1);
+      remaining.set(m.bId, remaining.get(m.bId) + 1);
+    }
+  }
+  return remaining;
+}
+
+/**
+ * Determine which ranks in a group are clinched.
+ * Returns: Map(rank -> pid)
+ */
+function clinchedRanksForGroup(groupId) {
+  const ranking = groupRanking(groupId);
+  if (ranking.length === 0) return new Map();
+
+  const remaining = remainingMatchesByPlayer(groupId);
+  const clinched = new Map();
+
+  // Precompute max possible wins for each player
+  const maxWins = new Map();
+  ranking.forEach(r => {
+    const rem = remaining.get(r.pid) ?? 0;
+    maxWins.set(r.pid, r.wins + rem);
+  });
+
+  // For each rank position r (1-based)
+  for (let i = 0; i < ranking.length; i++) {
+    const current = ranking[i];
+    const targetRank = i + 1;
+
+    let canBePassed = false;
+
+    // Anyone below this rank who could still surpass?
+    for (let j = i + 1; j < ranking.length; j++) {
+      const challenger = ranking[j];
+
+      // Challenger can surpass or tie?
+      if (maxWins.get(challenger.pid) >= current.wins) {
+        canBePassed = true;
+        break;
+      }
+    }
+
+    if (!canBePassed) {
+      clinched.set(targetRank, current.pid);
+    } else {
+      // Once a rank is not clinched, lower ranks cannot be clinched either
+      break;
+    }
+  }
+
+  return clinched;
+}
+
+/**
+ * Returns the winner pid if there is a decided head-to-head match
+ * between a and b in the same group. Otherwise null.
+ */
+function headToHeadWinner(aPid, bPid, groupId) {
+  const match = state.groupMatches.find(
+    (m) =>
+      m.groupId === groupId &&
+      ((m.aId === aPid && m.bId === bPid) ||
+       (m.aId === bPid && m.bId === aPid))
+  );
+
+  return match?.winnerId ?? null;
 }
 
 /* -----------------------------
@@ -221,16 +312,14 @@ function seedLabel(seedRef) {
 }
 
 /**
- * Resolve a seedRef to a participant id ONLY if the group is decided.
+ * Resolve a seedRef to a participant id ONLY if that rank is clinched.
  * Otherwise return null (so bracket shows seed label).
  */
 function resolveSeedPid(seedRef) {
   if (!seedRef) return null;
-  if (!isGroupDecided(seedRef.groupId)) return null;
 
-  const ranking = groupRanking(seedRef.groupId);
-  const row = ranking[seedRef.rank - 1];
-  return row ? row.pid : null;
+  const clinched = clinchedRanksForGroup(seedRef.groupId);
+  return clinched.get(seedRef.rank) ?? null;
 }
 
 /* -----------------------------
@@ -589,6 +678,7 @@ function renderGroups() {
     el.appendChild(badge);
 
     const ranking = groupRanking(g.id);
+    const clinched = clinchedRanksForGroup(g.id);
     const table = document.createElement("table");
     table.className = "table";
     table.innerHTML = `
@@ -596,15 +686,19 @@ function renderGroups() {
         <tr><th>Rank</th><th>Player</th><th>W</th><th>L</th><th>Pts</th></tr>
       </thead>
       <tbody>
-        ${ranking.map((r, i) => `
-          <tr>
-            <td>${i + 1}</td>
-            <td>${escapeHtml(r.name)}</td>
-            <td>${r.wins}</td>
-            <td>${r.losses}</td>
-            <td>${r.points}</td>
-          </tr>
-        `).join("")}
+        ${ranking.map((r, i) => {
+          const rank = i + 1;
+          const isClinched = clinched.get(rank) === r.pid;
+          return `
+            <tr ${isClinched ? 'style="font-weight:600;"' : ""}>
+              <td>${rank}${isClinched ? " ✅" : ""}</td>
+              <td>${escapeHtml(r.name)}</td>
+              <td>${r.wins}</td>
+              <td>${r.losses}</td>
+              <td>${r.points}</td>
+            </tr>
+          `;
+        }).join("")}
       </tbody>
     `;
     el.appendChild(table);
