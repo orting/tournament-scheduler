@@ -1,18 +1,15 @@
 "use strict";
 
 /**
- * Tournament Builder (Vanilla JS)
- * - Groups (random assignment)
- * - Round-robin group matches (each pair once)
- * - Win/lose results (winner selection)
- * - Standings
- * - Total qualifiers across groups (A): pick #1 from each group, then #2, etc.
- * - Knockout bracket with byes, auto-advancement, winner propagation
- * - localStorage save/load, reset
- * - Bracket becomes "dirty" if group results change after bracket creation
+ * Tournament Builder – v3 (Auto workflow + auto-updating bracket with seed labels)
+ * - Randomize groups => auto create group matches + auto create bracket
+ * - Bracket auto-updates on group result changes
+ * - Bracket shows seed labels (#1 Group A) until that group is decided
+ * - Knockout winners propagate forward
+ * - localStorage persistence
  */
 
-const STORAGE_KEY = "tournament_builder_state_v2";
+const STORAGE_KEY = "tournament_builder_state_v3";
 
 /* -----------------------------
    Utilities
@@ -50,13 +47,13 @@ function nextPowerOfTwo(n) {
   return p;
 }
 
-function toggleVisibility(elementId, buttonId, label) {
-  const el = document.getElementById(elementId);
-  const btn = document.getElementById(buttonId);
-  if (!el || !btn) return;
-
-  const isHidden = el.classList.toggle("hidden");
-  btn.textContent = `${isHidden ? "Show" : "Hide"} ${label}`;
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 /* -----------------------------
@@ -70,10 +67,14 @@ function defaultState() {
     qualifierCount: 0,
 
     groups: [], // {id, name, memberIds: []}
-    groupMatches: [], // {id, groupId, aId, bId, winnerId: null}
+    groupMatches: [], // {id, groupId, aId, bId, winnerId}
 
-    knockout: null, // { qualifiedIds: [], rounds: [ [ {id,aId,bId,winnerId} ] ] }
-    knockoutDirty: false
+    // knockout is derived from groups+results:
+    // {
+    //   seeds: [ { groupId, rank } ... ],
+    //   rounds: [ [ {id,aSeed,bSeed,winnerPid} ] ... ]
+    // }
+    knockout: null
   };
 }
 
@@ -99,20 +100,30 @@ function resetState() {
 }
 
 /* -----------------------------
-   Getters
+   Lookups
 ----------------------------- */
 
-function participantName(id) {
-  return state.participants.find((p) => p.id === id)?.name ?? "TBD";
+function participantName(pid) {
+  return state.participants.find((p) => p.id === pid)?.name ?? "TBD";
 }
 
-function isGroupStageComplete() {
-  return state.groupMatches.length > 0 && state.groupMatches.every((m) => !!m.winnerId);
+function groupName(gid) {
+  return state.groups.find((g) => g.id === gid)?.name ?? "Group ?";
 }
 
 /* -----------------------------
-   Standings / Qualifiers
+   Group completion + standings
 ----------------------------- */
+
+function matchesForGroup(groupId) {
+  return state.groupMatches.filter((m) => m.groupId === groupId);
+}
+
+function isGroupDecided(groupId) {
+  const ms = matchesForGroup(groupId);
+  if (ms.length === 0) return false;
+  return ms.every((m) => !!m.winnerId);
+}
 
 function computeStandingsByGroup() {
   // Map(groupId => Map(pid => {wins, losses}))
@@ -151,10 +162,11 @@ function groupRanking(groupId) {
       name: participantName(pid),
       wins: s.wins,
       losses: s.losses,
-      points: s.wins // 1 point per win
+      points: s.wins
     };
   });
 
+  // Sort: points desc, wins desc, losses asc, name
   rows.sort((a, b) =>
     (b.points - a.points) ||
     (b.wins - a.wins) ||
@@ -165,18 +177,21 @@ function groupRanking(groupId) {
   return rows;
 }
 
+/* -----------------------------
+   Seeds (Total qualifiers across groups: A)
+----------------------------- */
+
 /**
- * Total qualifiers across groups (A):
- * Pick in rounds: #1 from each group, then #2 from each group, etc.
- * until qualifierCount is reached.
+ * Returns seed refs in pick order:
+ * #1 from each group, then #2 from each group, etc. until total qualifiers filled.
+ * seedRef = { groupId, rank } where rank starts at 1.
  */
-function computeQualifiersTotal() {
+function computeSeedRefsTotal() {
   const total = Math.min(state.qualifierCount, state.participants.length);
   if (!state.groups.length) return [];
 
   const rankings = state.groups.map((g) => ({
     groupId: g.id,
-    groupName: g.name,
     ranking: groupRanking(g.id)
   }));
 
@@ -188,10 +203,9 @@ function computeQualifiersTotal() {
 
     for (const gr of rankings) {
       const row = gr.ranking[rankIndex];
-      if (row && !picked.includes(row.pid)) {
-        picked.push(row.pid);
+      if (row && picked.length < total) {
+        picked.push({ groupId: gr.groupId, rank: rankIndex + 1 });
         pickedSomething = true;
-        if (picked.length >= total) break;
       }
     }
 
@@ -202,71 +216,101 @@ function computeQualifiersTotal() {
   return picked;
 }
 
-/* -----------------------------
-   Knockout Bracket
------------------------------ */
-
-function findGroupRankInfo(pid) {
-  for (const g of state.groups) {
-    const r = groupRanking(g.id);
-    const idx = r.findIndex((x) => x.pid === pid);
-    if (idx >= 0) return { groupId: g.id, rank: idx + 1, wins: r[idx].wins };
-  }
-  return { groupId: null, rank: 999, wins: 0 };
+function seedLabel(seedRef) {
+  return `#${seedRef.rank} ${groupName(seedRef.groupId)}`;
 }
 
-function buildKnockout(qualifiedIds) {
-  // Seed: by more wins first, then better group rank
-  const seeded = [...qualifiedIds]
-    .map((pid) => {
-      const info = findGroupRankInfo(pid);
-      return { pid, wins: info.wins, rank: info.rank };
-    })
-    .sort((a, b) => (b.wins - a.wins) || (a.rank - b.rank))
-    .map((x) => x.pid);
+/**
+ * Resolve a seedRef to a participant id ONLY if the group is decided.
+ * Otherwise return null (so bracket shows seed label).
+ */
+function resolveSeedPid(seedRef) {
+  if (!seedRef) return null;
+  if (!isGroupDecided(seedRef.groupId)) return null;
 
-  const bracketSize = nextPowerOfTwo(seeded.length);
-  const byes = bracketSize - seeded.length;
-  const slots = [...seeded, ...Array(byes).fill(null)];
+  const ranking = groupRanking(seedRef.groupId);
+  const row = ranking[seedRef.rank - 1];
+  return row ? row.pid : null;
+}
 
-  // First round pairing: i vs (end - i)
+/* -----------------------------
+   Knockout creation + propagation
+----------------------------- */
+
+function buildKnockoutFromSeeds(seeds) {
+  const bracketSize = nextPowerOfTwo(seeds.length);
+  const byes = bracketSize - seeds.length;
+  const slots = [...seeds, ...Array(byes).fill(null)];
+
+  // First round: i vs (end-i)
   const firstRound = [];
   for (let i = 0; i < bracketSize / 2; i++) {
-    const a = slots[i];
-    const b = slots[bracketSize - 1 - i];
+    const aSeed = slots[i];
+    const bSeed = slots[bracketSize - 1 - i];
 
+    // winnerPid stays null until both resolved and user picks
+    // NOTE: If a side is a bye (null seed), it effectively auto-advances once the other side resolves.
     firstRound.push({
       id: uid(),
-      aId: a,
-      bId: b,
-      // auto-advance if bye
-      winnerId: a && !b ? a : (b && !a ? b : null)
+      aSeed,
+      bSeed,
+      winnerPid: null
     });
   }
 
+  // Pre-create later rounds as empty
   const rounds = [firstRound];
-
-  // Pre-create subsequent rounds (empty, will be filled by propagation)
   let matches = firstRound.length;
   while (matches > 1) {
     matches = matches / 2;
     rounds.push(
       Array.from({ length: matches }, () => ({
         id: uid(),
-        aId: null,
-        bId: null,
-        winnerId: null
+        aSeed: null,
+        bSeed: null,
+        winnerPid: null
       }))
     );
   }
 
-  const ko = { qualifiedIds: seeded, rounds };
-  propagateKnockout(ko);
+  const ko = { seeds, rounds };
+  propagateKnockoutWinners(ko);
   return ko;
 }
 
-function propagateKnockout(ko) {
-  // Fill later rounds based on winners of previous rounds
+/**
+ * Derive competitor PIDs for a match (a/b):
+ * - If aSeed/bSeed is a seedRef: resolve it to PID if group decided
+ * - If aSeed/bSeed is a special object: { fromMatchId } (winner flows from previous)
+ */
+function competitorPid(ko, side) {
+  if (!side) return null;
+
+  // seedRef: {groupId, rank}
+  if (side.groupId && side.rank) {
+    return resolveSeedPid(side);
+  }
+
+  // fromMatch: {fromMatchId:"..."}
+  if (side.fromMatchId) {
+    const found = findMatchById(ko, side.fromMatchId);
+    return found?.winnerPid ?? null;
+  }
+
+  return null;
+}
+
+function findMatchById(ko, matchId) {
+  for (const rnd of ko.rounds) {
+    for (const m of rnd) {
+      if (m.id === matchId) return m;
+    }
+  }
+  return null;
+}
+
+function propagateKnockoutWinners(ko) {
+  // Fill later rounds with "fromMatchId" pointers
   for (let r = 1; r < ko.rounds.length; r++) {
     const prev = ko.rounds[r - 1];
     const cur = ko.rounds[r];
@@ -275,28 +319,98 @@ function propagateKnockout(ko) {
       const m1 = prev[i * 2];
       const m2 = prev[i * 2 + 1];
 
-      const a = m1?.winnerId ?? null;
-      const b = m2?.winnerId ?? null;
+      cur[i].aSeed = { fromMatchId: m1.id };
+      cur[i].bSeed = { fromMatchId: m2.id };
 
-      cur[i].aId = a;
-      cur[i].bId = b;
-
-      // Auto-advance if one side is present
-      if (a && !b) cur[i].winnerId = a;
-      else if (b && !a) cur[i].winnerId = b;
-      else if (!a && !b) cur[i].winnerId = null;
-      else {
-        // both present: keep winner if still valid, else clear
-        if (cur[i].winnerId !== a && cur[i].winnerId !== b) {
-          cur[i].winnerId = null;
-        }
+      // If current winner is no longer valid, clear it
+      const aPid = competitorPid(ko, cur[i].aSeed);
+      const bPid = competitorPid(ko, cur[i].bSeed);
+      if (cur[i].winnerPid && cur[i].winnerPid !== aPid && cur[i].winnerPid !== bPid) {
+        cur[i].winnerPid = null;
       }
+
+      // Auto-advance if exactly one side is known and the other is absent/unknown
+      // (This mainly affects bye paths early on)
+      if (aPid && !bPid) cur[i].winnerPid = aPid;
+      if (bPid && !aPid) cur[i].winnerPid = bPid;
+    }
+  }
+
+  // Also auto-advance in first round for byes when a competitor becomes known
+  const first = ko.rounds[0];
+  for (const m of first) {
+    const aPid = competitorPid(ko, m.aSeed);
+    const bPid = competitorPid(ko, m.bSeed);
+
+    // If one side is a bye (null seed), propagate the known one
+    if (m.aSeed && !m.bSeed && aPid) m.winnerPid = aPid;
+    if (m.bSeed && !m.aSeed && bPid) m.winnerPid = bPid;
+
+    // If winner exists but no longer matches competitors, clear
+    if (m.winnerPid && m.winnerPid !== aPid && m.winnerPid !== bPid) {
+      m.winnerPid = null;
     }
   }
 }
 
+/**
+ * Rebuild knockout entirely (auto-update), preserving winners only when still valid.
+ * This is called whenever group results change.
+ */
+function rebuildKnockoutAuto() {
+  if (!state.groups.length) {
+    state.knockout = null;
+    return;
+  }
+
+  const seeds = computeSeedRefsTotal();
+  const old = state.knockout;
+  const fresh = buildKnockoutFromSeeds(seeds);
+
+  // Try to preserve first-round winner selections when the competitors are unchanged
+  if (old && old.rounds && old.rounds[0] && fresh.rounds[0]) {
+    const oldFirst = old.rounds[0];
+    const freshFirst = fresh.rounds[0];
+
+    const oldByKey = new Map();
+    for (const m of oldFirst) {
+      const key = matchupKey(old, m);
+      oldByKey.set(key, m.winnerPid ?? null);
+    }
+
+    for (const m of freshFirst) {
+      const key = matchupKey(fresh, m);
+      const oldWinner = oldByKey.get(key);
+      if (oldWinner) {
+        const aPid = competitorPid(fresh, m.aSeed);
+        const bPid = competitorPid(fresh, m.bSeed);
+        if (oldWinner === aPid || oldWinner === bPid) {
+          m.winnerPid = oldWinner;
+        }
+      }
+    }
+  }
+
+  propagateKnockoutWinners(fresh);
+  state.knockout = fresh;
+}
+
+function matchupKey(ko, match) {
+  // Stable key based on seed labels (not participant names)
+  const a = match.aSeed ? seedOrFlowLabel(ko, match.aSeed) : "BYE";
+  const b = match.bSeed ? seedOrFlowLabel(ko, match.bSeed) : "BYE";
+  return `${a}__vs__${b}`;
+}
+
+function seedOrFlowLabel(ko, side) {
+  if (!side) return "BYE";
+  if (side.groupId && side.rank) return seedLabel(side);
+  if (side.fromMatchId) return `W(${side.fromMatchId.slice(0, 6)})`;
+  return "TBD";
+}
+
 /* -----------------------------
-   Actions (Setup Steps)
+   Actions (Workflow)
 ----------------------------- */
 
 function buildParticipants() {
@@ -312,20 +426,21 @@ function buildParticipants() {
     name: String(i + 1)
   }));
 
-  // reset downstream
   state.groups = [];
   state.groupMatches = [];
   state.knockout = null;
-  state.knockoutDirty = false;
 
   saveState();
   renderAll();
 
-  // show participant editor if present
   $("participantEditor")?.classList.remove("hidden");
 }
 
-function randomizeGroups() {
+/**
+ * NEW WORKFLOW:
+ * Randomize Groups => auto create group matches => auto build bracket
+ */
+function randomizeGroupsAndAutoBuild() {
   if (!state.participants.length) return;
 
   const gCount = Math.max(1, state.groupCount);
@@ -337,22 +452,21 @@ function randomizeGroups() {
     memberIds: []
   }));
 
-  // deal in round-robin
   ids.forEach((pid, idx) => {
     state.groups[idx % gCount].memberIds.push(pid);
   });
 
-  state.groupMatches = [];
-  state.knockout = null;
-  state.knockoutDirty = false;
+  // Auto create matches
+  state.groupMatches = createMatchesForAllGroups();
+
+  // Auto build bracket
+  rebuildKnockoutAuto();
 
   saveState();
   renderAll();
 }
 
-function createGroupMatches() {
-  if (!state.groups.length) return;
-
+function createMatchesForAllGroups() {
   const matches = [];
   for (const g of state.groups) {
     const ids = g.memberIds;
@@ -368,34 +482,20 @@ function createGroupMatches() {
       }
     }
   }
+  return matches;
+}
 
-  state.groupMatches = matches;
-  state.knockout = null;
-  state.knockoutDirty = false;
-
+// Optional legacy buttons (if still in your UI)
+function recreateMatchesOnly() {
+  if (!state.groups.length) return;
+  state.groupMatches = createMatchesForAllGroups();
+  rebuildKnockoutAuto();
   saveState();
   renderAll();
 }
 
-function createKnockoutBracket() {
-  if (!isGroupStageComplete()) return;
-
-  const qualified = computeQualifiersTotal();
-  state.knockout = buildKnockout(qualified);
-  state.knockoutDirty = false;
-
-  saveState();
-  renderAll();
-}
-
-function updateKnockoutBracket() {
-  if (!isGroupStageComplete()) return;
-  if (!state.knockout) return;
-
-  const qualified = computeQualifiersTotal();
-  state.knockout = buildKnockout(qualified);
-  state.knockoutDirty = false;
-
+function rebuildBracketOnly() {
+  rebuildKnockoutAuto();
   saveState();
   renderAll();
 }
@@ -410,12 +510,11 @@ function renderParticipantEditor() {
   if (!wrap || !editor) return;
 
   if (!state.participants.length) {
-    editor.classList.add("hidden");
     wrap.innerHTML = "";
+    editor.classList.add("hidden");
     return;
   }
 
-  editor.classList.remove("hidden");
   wrap.innerHTML = "";
 
   state.participants.forEach((p, idx) => {
@@ -439,9 +538,11 @@ function renderParticipantEditor() {
       const v = String(e.target.value ?? "").trim();
       p.name = v.length ? v : String(idx + 1);
       saveState();
-      renderGroups(); // names affect groups/standings display
-      renderGroupMatches(); // names affect match display
-      renderQualifiersAndBracket(); // names affect knockout display
+      // Names affect multiple views
+      renderGroups();
+      renderGroupMatches();
+      renderKnockout();
+      renderQualifiers();
     });
 
     label.appendChild(input);
@@ -480,6 +581,12 @@ function renderGroups() {
       pills.appendChild(pill);
     });
     el.appendChild(pills);
+
+    const decided = isGroupDecided(g.id);
+    const badge = document.createElement("p");
+    badge.className = "muted";
+    badge.textContent = decided ? "Group decided ✅" : "Group in progress…";
+    el.appendChild(badge);
 
     const ranking = groupRanking(g.id);
     const table = document.createElement("table");
@@ -547,12 +654,13 @@ function renderGroupMatches() {
         const val = String(e.target.value || "");
         m.winnerId = val ? val : null;
 
-        // If a bracket already exists, mark it out-of-date (do not auto rebuild)
-        if (state.knockout) state.knockoutDirty = true;
+        // AUTO UPDATE BRACKET ON EVERY GROUP RESULT CHANGE
+        rebuildKnockoutAuto();
 
         saveState();
-        renderGroups(); // standings update
-        renderQualifiersAndBracket();
+        renderGroups();       // standings update
+        renderQualifiers();   // qualifiers/seed refs update
+        renderKnockout();     // bracket update
         renderButtons();
       });
 
@@ -564,59 +672,52 @@ function renderGroupMatches() {
   }
 }
 
-function renderQualifiersAndBracket() {
+function renderQualifiers() {
   const qHost = $("qualifiersView");
-  const bHost = $("bracketView");
-  if (!qHost || !bHost) return;
+  if (!qHost) return;
 
-  if (!state.groupMatches.length) {
+  if (!state.groups.length) {
     qHost.className = "stack muted";
     qHost.textContent = "No qualifiers yet.";
-    bHost.className = "stack muted";
-    bHost.textContent = "No bracket yet.";
     return;
   }
 
   const total = Math.min(state.qualifierCount, state.participants.length);
-  const qualified = computeQualifiersTotal();
+  const seeds = computeSeedRefsTotal();
 
   qHost.className = "stack";
   qHost.innerHTML = `
     <div class="subcard">
       <h3>Qualifiers (total ${total})</h3>
       <div class="pills">
-        ${qualified.map((pid) => `<span class="pill">${escapeHtml(participantName(pid))}</span>`).join("")}
+        ${seeds.map((s) => {
+          const pid = resolveSeedPid(s);
+          const txt = pid ? `${seedLabel(s)} → ${participantName(pid)}` : seedLabel(s);
+          return `<span class="pill">${escapeHtml(txt)}</span>`;
+        }).join("")}
       </div>
       <p class="muted">
-        Selection rule: take #1 from each group, then #2 from each group, and so on until filled.
+        Bracket uses seed labels until a group is decided (all match winners set for that group).
       </p>
-      ${isGroupStageComplete()
-        ? `<p class="muted">Group stage complete ✅ You can create/update the knockout bracket.</p>`
-        : `<p class="muted">Group stage not complete yet — fill in all match winners to create the bracket.</p>`
-      }
     </div>
   `;
+}
+
+function renderKnockout() {
+  const bHost = $("bracketView");
+  if (!bHost) return;
 
   if (!state.knockout) {
     bHost.className = "stack muted";
-    bHost.textContent = "No bracket yet. Click “Create Knockout Bracket”.";
+    bHost.textContent = "No bracket yet. Randomize groups to auto-create it.";
     return;
   }
 
-  // If bracket exists, keep it propagated for display
-  propagateKnockout(state.knockout);
+  // Keep propagation current
+  propagateKnockoutWinners(state.knockout);
 
   bHost.className = "stack";
   bHost.innerHTML = "";
-
-  if (state.knockoutDirty) {
-    const warn = document.createElement("div");
-    warn.className = "subcard";
-    warn.innerHTML = `
-      <p><strong>Bracket is out of date.</strong> Group results changed. Click <em>Update Bracket</em>.</p>
-    `;
-    bHost.appendChild(warn);
-  }
 
   state.knockout.rounds.forEach((round, rIdx) => {
     const card = document.createElement("div");
@@ -627,33 +728,56 @@ function renderQualifiersAndBracket() {
       const row = document.createElement("div");
       row.className = "match";
 
-      const aName = m.aId ? participantName(m.aId) : "TBD";
-      const bName = m.bId ? participantName(m.bId) : "TBD";
+      // Display labels (seed-based) by default
+      const aLabel = m.aSeed ? seedOrFlowLabel(state.knockout, m.aSeed) : "BYE";
+      const bLabel = m.bSeed ? seedOrFlowLabel(state.knockout, m.bSeed) : "BYE";
+
+      const aPid = competitorPid(state.knockout, m.aSeed);
+      const bPid = competitorPid(state.knockout, m.bSeed);
+
+      // "Group decided" rule:
+      // show real name only if that seed is a real seedRef AND its group is decided,
+      // or if it comes from a previous match winner (then show pid name if winner exists)
+      const aDisplay = aPid ? participantName(aPid) : null;
+      const bDisplay = bPid ? participantName(bPid) : null;
 
       const names = document.createElement("div");
       names.className = "names";
-      names.innerHTML = `<strong>${escapeHtml(aName)}</strong> <span class="vs">vs</span> <strong>${escapeHtml(bName)}</strong>`;
+
+      // main line: seed/flow labels
+      names.innerHTML = `<strong>${escapeHtml(aLabel)}</strong> <span class="vs">vs</span> <strong>${escapeHtml(bLabel)}</strong>`;
       row.appendChild(names);
+
+      // secondary line: actual participants when known
+      const sub = document.createElement("div");
+      sub.className = "muted";
+      sub.style.fontSize = "13px";
+      sub.style.marginTop = "6px";
+      sub.textContent =
+        (aDisplay || bDisplay)
+          ? `${aDisplay ?? "TBD"} vs ${bDisplay ?? "TBD"}`
+          : "Participants TBD";
+      row.appendChild(sub);
 
       const select = document.createElement("select");
       select.appendChild(new Option("Winner…", ""));
 
-      if (m.aId) select.appendChild(new Option(aName, m.aId));
-      if (m.bId) select.appendChild(new Option(bName, m.bId));
+      if (aPid) select.appendChild(new Option(participantName(aPid), aPid));
+      if (bPid) select.appendChild(new Option(participantName(bPid), bPid));
 
-      // allow selection only when both present; byes auto-advance
-      select.disabled = !(m.aId && m.bId);
+      // Enable ONLY when both participants are known
+      select.disabled = !(aPid && bPid);
 
-      // set current winner
-      select.value = m.winnerId ?? "";
+      select.value = m.winnerPid ?? "";
 
       select.addEventListener("change", (e) => {
         const val = String(e.target.value || "");
-        m.winnerId = val ? val : null;
+        m.winnerPid = val ? val : null;
 
-        propagateKnockout(state.knockout);
+        propagateKnockoutWinners(state.knockout);
+
         saveState();
-        renderQualifiersAndBracket();
+        renderKnockout();
       });
 
       row.appendChild(select);
@@ -666,10 +790,10 @@ function renderQualifiersAndBracket() {
   // Champion
   const lastRound = state.knockout.rounds[state.knockout.rounds.length - 1];
   const final = lastRound?.[0];
-  if (final?.winnerId) {
+  if (final?.winnerPid) {
     const champ = document.createElement("div");
     champ.className = "subcard";
-    champ.innerHTML = `<h3>🏆 Champion: ${escapeHtml(participantName(final.winnerId))}</h3>`;
+    champ.innerHTML = `<h3>🏆 Champion: ${escapeHtml(participantName(final.winnerPid))}</h3>`;
     bHost.appendChild(champ);
   }
 }
@@ -678,37 +802,21 @@ function renderButtons() {
   const assignBtn = $("assignGroupsBtn");
   const matchesBtn = $("makeMatchesBtn");
   const bracketBtn = $("makeBracketBtn");
-  const updateBtn = $("updateBracketBtn");
 
   if (assignBtn) assignBtn.disabled = state.participants.length === 0;
+
+  // These buttons are now optional / legacy because we auto-build:
   if (matchesBtn) matchesBtn.disabled = state.groups.length === 0;
-
-  // Bracket creation should require group stage complete
-  if (bracketBtn) bracketBtn.disabled = !isGroupStageComplete();
-
-  // Update button is optional in HTML
-  if (updateBtn) updateBtn.disabled = !(state.knockout && state.knockoutDirty && isGroupStageComplete());
+  if (bracketBtn) bracketBtn.disabled = state.groups.length === 0;
 }
 
 function renderAll() {
   renderParticipantEditor();
   renderGroups();
   renderGroupMatches();
-  renderQualifiersAndBracket();
+  renderQualifiers();
+  renderKnockout();
   renderButtons();
-}
-
-/* -----------------------------
-   HTML safety (prevent injection in template strings)
------------------------------ */
-
-function escapeHtml(str) {
-  return String(str)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
 }
 
 /* -----------------------------
@@ -719,43 +827,12 @@ safeOn("resetBtn", "click", resetState);
 safeOn("saveBtn", "click", saveState);
 
 safeOn("buildParticipantsBtn", "click", buildParticipants);
-safeOn("assignGroupsBtn", "click", randomizeGroups);
-safeOn("makeMatchesBtn", "click", createGroupMatches);
 
-safeOn("makeBracketBtn", "click", createKnockoutBracket);
-safeOn("updateBracketBtn", "click", updateKnockoutBracket);
-
-safeOn("toggleParticipantsBtn", "click", () => {
-  toggleVisibility("participantEditor", "toggleParticipantsBtn", "Participants");
-});
-
-safeOn("toggleGroupsBtn", "click", () => {
-  toggleVisibility("groupsView", "toggleGroupsBtn", "Groups");
-});
-
-safeOn("toggleBracketBtn", "click", () => {
-  toggleVisibility("qualifiersView", "toggleBracketBtn", "Bracket");
-  toggleVisibility("bracketView", "toggleBracketBtn", "Bracket");
-});
-
-/* --
-   Accordion
-   -- */
-function initAccordions() {
-  document.querySelectorAll(".accordion").forEach(acc => {
-    const header = acc.querySelector(".accordion-header");
-    if (!header) return;
-
-    header.addEventListener("click", () => {
-      const isOpen = acc.dataset.open === "true";
-      acc.dataset.open = isOpen ? "false" : "true";
-    });
-  });
-}
+// NEW: randomize triggers matches + bracket auto-setup
+safeOn("assignGroupsBtn", "click", randomizeGroupsAndAutoBuild);
 
 /* -----------------------------
    Initial render
 ----------------------------- */
 
 renderAll();
-initAccordions()
