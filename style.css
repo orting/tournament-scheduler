@@ -174,3 +174,64 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   display: none;
   margin-top: 0;
 }
+
+/* Compact participant editor */
+
+#participantInputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+/* Tighter labels */
+#participantInputs label {
+  font-size: 13px;
+}
+
+/* Reduce input height slightly */
+#participantInputs input {
+  padding: 6px 8px;
+  font-size: 14px;
+}
+
+
+/* Compact group matches layout */
+
+.group .match {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.group .match select {
+  min-width: 120px;
+  padding: 4px 6px;
+  font-size: 13px;
+}
+
+/* Arrange matches in a grid inside each group */
+.group {
+  display: block;
+}
+
+.group > .match {
+  margin-bottom: 6px;
+}
+
+/* When grouping matches, override with grid */
+.group.matches-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 8px 12px;
+}
+
+.group-matches-heading {
+  grid-column: 1 / -1; /* span all columns */
+  margin: 0 0 6px 0;
+  font-size: 15px;  
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}

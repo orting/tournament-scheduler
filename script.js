@@ -722,8 +722,8 @@ function renderGroupMatches() {
 
   for (const g of state.groups) {
     const wrap = document.createElement("div");
-    wrap.className = "group";
-    wrap.innerHTML = `<h3>${escapeHtml(g.name)} matches</h3>`;
+    wrap.className = "group matches-grid";
+    wrap.innerHTML = `<h3 class="group-matches-heading">${escapeHtml(g.name)} matches</h3>`;
 
     const matches = state.groupMatches.filter((m) => m.groupId === g.id);
 
