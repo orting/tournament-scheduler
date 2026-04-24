@@ -387,3 +387,22 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   border-left: 3px solid rgba(255, 204, 102, 0.75);
   background: rgba(255, 204, 102, 0.10);
 }
+
+
+.tiebreak-controls {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px dashed rgba(255, 204, 102, 0.5);
+  border-radius: 8px;
+  background: rgba(255, 204, 102, 0.05);
+}
+
+.tiebreak-controls .row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tiebreak-controls button {
+  padding: 6px 10px;
+}

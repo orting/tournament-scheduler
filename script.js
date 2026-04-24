@@ -399,6 +399,70 @@ function applyMiniTiebreakToGroup(groupId, mini) {
   renderAll();
 }
 
+function applyManualTiebreakToGroup(groupId, resolvedOrder) {
+  const g = state.groups.find(gr => gr.id === groupId);
+  if (!g) return;
+
+  // Ensure resolvedOrder is an array of unique pids
+  const uniq = [...new Set(resolvedOrder)];
+  if (uniq.length !== resolvedOrder.length) {
+    console.warn("Manual tiebreak: duplicate participants in resolvedOrder");
+    return;
+  }
+
+  // Optional safety: only allow manual tiebreak when group is decided
+  if (!isGroupDecided(groupId)) {
+    console.warn("Manual tiebreak: group not decided yet");
+    return;
+  }
+
+  // Optional safety: ensure these pids belong to the group
+  const groupSet = new Set(g.memberIds);
+  for (const pid of uniq) {
+    if (!groupSet.has(pid)) {
+      console.warn("Manual tiebreak: pid not in group", pid);
+      return;
+    }
+  }
+
+  // Optional safety: ensure the manual order covers exactly the current boundary-tied set
+  // (this avoids accidentally reordering unrelated players)
+  const tied = tiedAtQualificationBoundaries(groupId);
+  if (tied.size > 0) {
+    const tiedArr = [...tied];
+    const manualSet = new Set(uniq);
+    const same =
+      tiedArr.every(pid => manualSet.has(pid)) &&
+      uniq.every(pid => tied.has(pid));
+
+    if (!same) {
+      console.warn("Manual tiebreak: order must match tied-at-boundary set", {
+        tied: tiedArr,
+        provided: uniq
+      });
+      return;
+    }
+  }
+
+  g.tiebreak = {
+    type: "manual",
+    resolvedOrder: uniq
+  };
+
+  saveState();
+  renderAll();
+}
+
+function clearGroupTiebreak(groupId) {
+  const g = state.groups.find(gr => gr.id === groupId);
+  if (!g) return;
+
+  g.tiebreak = null;
+
+  saveState();
+  renderAll();
+}
+
 /* -----------------------------
    State
 ----------------------------- */
@@ -526,6 +590,7 @@ function groupRanking(groupId) {
     return a.name.localeCompare(b.name);
   });
 
+  // Apply stored tiebreak override (manual or mini) to tied participants
   if (g.tiebreak?.resolvedOrder?.length) {
     const order = new Map(
       g.tiebreak.resolvedOrder.map((pid, i) => [pid, i])
@@ -534,6 +599,8 @@ function groupRanking(groupId) {
     rows.sort((a, b) => {
       const ia = order.get(a.pid);
       const ib = order.get(b.pid);
+
+      // Only affects participants included in resolvedOrder
       if (ia != null && ib != null) return ia - ib;
       if (ia != null) return -1;
       if (ib != null) return 1;
@@ -1020,6 +1087,39 @@ function rebuildBracketOnly() {
    Rendering
 ----------------------------- */
 
+function renderGroupTiebreakControls(group, tiedSet) {
+  const container = document.createElement("div");
+  container.className = "tiebreak-controls";
+
+  const heading = document.createElement("p");
+  heading.className = "muted";
+  heading.textContent = "Tie at qualification boundary needs resolution:";
+  container.appendChild(heading);
+
+  const btnMini = document.createElement("button");
+  btnMini.textContent = "Resolve with mini knockout";
+  btnMini.onclick = () => {
+    // Placeholder – next step
+    console.log("Mini knockout selected for group", group.id, [...tiedSet]);
+  };
+
+  const btnManual = document.createElement("button");
+  btnManual.textContent = "Resolve manually";
+  btnManual.onclick = () => {
+    // Placeholder – next step
+    console.log("Manual tiebreak selected for group", group.id, [...tiedSet]);
+  };
+
+  const row = document.createElement("div");
+  row.className = "row";
+  row.appendChild(btnMini);
+  row.appendChild(btnManual);
+
+  container.appendChild(row);
+
+  return container;
+}
+
 function renderParticipantEditor() {
   const wrap = $("participantInputs");
   const editor = $("participantEditor");
@@ -1142,6 +1242,16 @@ function renderGroups() {
       </tbody>
     `;
     el.appendChild(table);
+
+    // Show tiebreak resolution controls only when needed
+    if (
+      isGroupDecided(g.id) &&
+      tiedSet.size > 0 &&
+      !g.tiebreak
+    ) {
+      const controls = renderGroupTiebreakControls(g, tiedSet);
+      el.appendChild(controls);
+    }
 
     host.appendChild(el);
   }
