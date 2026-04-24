@@ -329,76 +329,6 @@ function groupStatus(groupId) {
   return tied.size > 0 ? "undecided-tie" : "decided";
 }
 
-function buildMiniKnockoutForTie(tiedPids) {
-  // Randomize order for fairness
-  const shuffled = shuffle([...tiedPids]);
-
-  // If odd, give exactly one random bye
-  let byePid = null;
-  if (shuffled.length % 2 === 1) {
-    byePid = shuffled.pop(); // random because shuffled
-  }
-
-  // Pair remaining players
-  const matches = [];
-  for (let i = 0; i < shuffled.length; i += 2) {
-    matches.push({
-      id: uid(),
-      aPid: shuffled[i],
-      bPid: shuffled[i + 1],
-      winnerPid: null
-    });
-  }
-
-  return {
-    byePid,     // null or pid
-    matches,    // first-round matches only
-    winners: [] // to be filled as user selects winners
-  };
-}
-
-function resolveMiniKnockout(mini) {
-  const order = [];
-
-  // Winner(s) from played matches
-  const winners = mini.matches.map(m => m.winnerPid).filter(Boolean);
-
-  // If there was a bye, treat it as an implicit win
-  if (mini.byePid) winners.push(mini.byePid);
-
-  // If we now have more than one winner, recurse
-  if (winners.length > 1) {
-    const nextMini = buildMiniKnockoutForTie(winners);
-    // carry over state if needed (UI will handle)
-    return resolveMiniKnockout(nextMini);
-  }
-
-  // Final winner
-  order.push(winners[0]);
-
-  // Losers in reverse order of elimination (simple but sufficient)
-  const losers = mini.matches
-    .flatMap(m => [m.aPid, m.bPid])
-    .filter(pid => pid !== mini.matches.find(m => m.winnerPid)?.winnerPid);
-
-  return order.concat(losers);
-}
-
-function applyMiniTiebreakToGroup(groupId, mini) {
-  const g = state.groups.find(gr => gr.id === groupId);
-  if (!g) return;
-
-  const resolvedOrder = resolveMiniKnockout(mini);
-
-  g.tiebreak = {
-    type: "mini",
-    resolvedOrder
-  };
-
-  saveState();
-  renderAll();
-}
-
 function applyManualTiebreakToGroup(groupId, resolvedOrder) {
   const g = state.groups.find(gr => gr.id === groupId);
   if (!g) return;
@@ -488,9 +418,8 @@ function defaultState() {
 let state = loadState() ?? defaultState();
 let ui = {
   activeGroupId: null,     // which group has the tiebreak panel open
-  mode: null,              // "manual" | "mini"
+  mode: null,              // "manual" 
   manualOrder: [],         // array of pids (current ordering)
-  mini: null               // { byePid, matches: [{aPid,bPid,winnerPid}] }
 };
 
 function loadState() {
@@ -596,7 +525,7 @@ function groupRanking(groupId) {
     return a.name.localeCompare(b.name);
   });
 
-  // Apply stored tiebreak override (manual or mini) to tied participants
+  // Apply stored tiebreak override to tied participants
   if (g.tiebreak?.resolvedOrder?.length) {
     const order = new Map(
       g.tiebreak.resolvedOrder.map((pid, i) => [pid, i])
@@ -1089,26 +1018,6 @@ function rebuildBracketOnly() {
   renderAll();
 }
 
-function createMiniTiebreak(tiedPids) {
-  const shuffled = shuffle([...tiedPids]);
-  let byePid = null;
-
-  if (shuffled.length % 2 === 1) {
-    byePid = shuffled.pop(); // random because shuffled
-  }
-
-  const matches = [];
-  for (let i = 0; i < shuffled.length; i += 2) {
-    matches.push({
-      aPid: shuffled[i],
-      bPid: shuffled[i + 1],
-      winnerPid: null
-    });
-  }
-
-  return { byePid, matches };
-}
-
 /* -----------------------------
    Rendering
 ----------------------------- */
@@ -1211,86 +1120,6 @@ function renderManualTiebreakPanel(group) {
   return panel;
 }
 
-function renderMiniTiebreakPanel(group) {
-  const panel = document.createElement("div");
-  panel.className = "tiebreak-panel";
-
-  const title = document.createElement("p");
-  title.className = "muted";
-  title.textContent = "Mini knockout tiebreak (winner ranks highest):";
-  panel.appendChild(title);
-
-  if (ui.mini.byePid) {
-    const bye = document.createElement("p");
-    bye.className = "muted";
-    bye.textContent = `Bye: ${participantName(ui.mini.byePid)}`;
-    panel.appendChild(bye);
-  }
-
-  ui.mini.matches.forEach((m, idx) => {
-    const row = document.createElement("div");
-    row.className = "tiebreak-row";
-
-    const label = document.createElement("div");
-    label.textContent =
-      `${participantName(m.aPid)} vs ${participantName(m.bPid)}`;
-
-    const select = document.createElement("select");
-    select.innerHTML = `
-      <option value="">Winner…</option>
-      <option value="${m.aPid}">${participantName(m.aPid)}</option>
-      <option value="${m.bPid}">${participantName(m.bPid)}</option>
-    `;
-    select.value = m.winnerPid ?? "";
-    select.onchange = () => {
-      m.winnerPid = select.value || null;
-      renderAll();
-    };
-
-    row.appendChild(label);
-    row.appendChild(select);
-    panel.appendChild(row);
-  });
-
-  const allChosen = ui.mini.matches.every(m => m.winnerPid);
-
-  const actions = document.createElement("div");
-  actions.className = "row";
-
-  const finish = document.createElement("button");
-  finish.textContent = "Finish tiebreak";
-  finish.disabled = !allChosen;
-  finish.onclick = () => {
-    // Winner order: winners first, then losers, bye treated as winner
-    const winners = ui.mini.matches.map(m => m.winnerPid);
-    if (ui.mini.byePid) winners.push(ui.mini.byePid);
-
-    const losers = ui.mini.matches
-      .flatMap(m => [m.aPid, m.bPid])
-      .filter(pid => !winners.includes(pid));
-
-    applyManualTiebreakToGroup(group.id, winners.concat(losers));
-    ui.activeGroupId = null;
-    ui.mode = null;
-    ui.mini = null;
-  };
-
-  const cancel = document.createElement("button");
-  cancel.className = "secondary";
-  cancel.textContent = "Cancel";
-  cancel.onclick = () => {
-    ui.activeGroupId = null;
-    ui.mode = null;
-    ui.mini = null;
-    renderAll();
-  };
-
-  actions.appendChild(finish);
-  actions.appendChild(cancel);
-  panel.appendChild(actions);
-
-  return panel;
-}
 
 function renderGroupTiebreakControls(group, tiedSet) {
   const container = document.createElement("div");
@@ -1301,22 +1130,12 @@ function renderGroupTiebreakControls(group, tiedSet) {
   heading.textContent = "Tie at qualification boundary needs resolution:";
   container.appendChild(heading);
 
-  const btnMini = document.createElement("button");
-  btnMini.textContent = "Resolve with mini knockout";
-  btnMini.onclick = () => {
-    ui.activeGroupId = group.id;
-    ui.mode = "mini";
-    ui.mini = createMiniTiebreak([...tiedSet]);
-    renderAll();
-  };
-
   const btnManual = document.createElement("button");
   btnManual.textContent = "Resolve manually";
   btnManual.onclick = () => openManualTiebreak(group.id, tiedSet);
 
   const row = document.createElement("div");
   row.className = "row";
-  row.appendChild(btnMini);
   row.appendChild(btnManual);
 
   container.appendChild(row);
@@ -1457,9 +1276,6 @@ function renderGroups() {
     if (ui.activeGroupId === g.id) {
       if (ui.mode === "manual") {
         el.appendChild(renderManualTiebreakPanel(g));
-      }
-      else if (ui.mode === "mini") {
-        el.appendChild(renderMiniTiebreakPanel(g));
       }
     }
 
