@@ -401,12 +401,28 @@ function clearGroupTiebreak(groupId) {
 }
 
 function isGuaranteedFromGroup(groupId, pid) {
+  const g = state.groups.find(gr => gr.id === groupId);
+  if (!g) return false;
+
+  // If a manual tiebreak exists, it authoritatively resolves the group
   const ranking = groupRanking(groupId);
   const { q } = getQualificationParams();
   const idx = ranking.findIndex(r => r.pid === pid);
   if (idx === -1) return false;
-  return idx + 1 <= q; // rank is 1-based
+
+  // ✅ Case 1: group is decided -> final rank determines guarantee
+  if (isGroupDecided(groupId)) {
+    return idx + 1 <= q;
+  }
+
+  // ❌ Don’t allow guarantees while a boundary tie exists
+  if (tiedAtQualificationBoundaries(groupId).size > 0) return false;
+
+  // ✅ Case 2: early clinch while group still in progress
+  const clinched = clinchedRanksForGroup(groupId);
+  return clinched.get(idx + 1) === pid;
 }
+
 
 /* -----------------------------
    State
@@ -433,7 +449,7 @@ function defaultState() {
 let state = loadState() ?? defaultState();
 let ui = {
   activeGroupId: null,     // which group has the tiebreak panel open
-  mode: null,              // "manual" 
+  mode: null,              // "manual"
   manualOrder: [],         // array of pids (current ordering)
 };
 
