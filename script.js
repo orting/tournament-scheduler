@@ -386,6 +386,7 @@ function applyManualTiebreakToGroup(groupId, resolvedOrder) {
     resolvedOrder: uniq
   };
 
+  rebuildKnockoutAuto();
   saveState();
   renderAll();
 }
@@ -396,6 +397,7 @@ function clearGroupTiebreak(groupId) {
 
   g.tiebreak = null;
 
+  rebuildKnockoutAuto();
   saveState();
   renderAll();
 }
@@ -777,9 +779,28 @@ function seedLabel(seedRef) {
 function resolveSeedPid(seedRef) {
   if (!seedRef) return null;
 
-  const clinched = clinchedRanksForGroup(seedRef.groupId);
-  return clinched.get(seedRef.rank) ?? null;
+  const { groupId, rank } = seedRef;
+  const g = state.groups.find(gr => gr.id === groupId);
+  if (!g) return null;
+
+  const ranking = groupRanking(groupId);
+  const idx = rank - 1;
+
+  if (idx < 0 || idx >= ranking.length) return null;
+
+  // ✅ FINAL: if group decided and no boundary tie, ranking is authoritative
+  if (
+    isGroupDecided(groupId) &&
+    tiedAtQualificationBoundaries(groupId).size === 0
+  ) {
+    return ranking[idx].pid;
+  }
+
+  // ✅ Otherwise fall back to early-clinch logic
+  const clinched = clinchedRanksForGroup(groupId);
+  return clinched.get(rank) ?? null;
 }
+
 
 /* -----------------------------
    Knockout creation + propagation
