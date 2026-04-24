@@ -17,44 +17,26 @@
       </div>
     </header>
 
-    <!-- STEP 1–4: Setup -->
-    <section class="card">
-      <h2>Setup</h2>
-
-      <div class="grid">
-        <label>
-          Number of participants
-          <input id="participantCount" type="number" min="2" value="8" />
-        </label>
-
-        <label>
-          Number of groups
-          <input id="groupCount" type="number" min="1" value="2" />
-        </label>
-
-        <label>
-          Qualifiers to knockout (total)
-          <input id="qualifierCount" type="number" min="2" value="4" />
-        </label>
-      </div>
-
-      <div class="row">
-        <button id="buildParticipantsBtn">Create Participants</button>
-        <button id="assignGroupsBtn" disabled> Create Groups</button>
-      </div>
-    </section>
-
     <!-- PARTICIPANTS -->
     <section class="card accordion" data-open="true">
-	<button class="accordion-header">
-	  <span class="arrow">▶</span>
-	  <span>Participants</span>
-	</button>
-	<div class="accordion-body" id="participantEditor">
-          <div id="participantInputs" class="participant-inputs"></div>
-	</div>
-	</section>
-    </section>
+      <button class="accordion-header">
+        <span class="arrow">▶</span>
+        <span>Participants</span>
+      </button>
+      <div class="accordion-body">
+	<div id="participantsView" class="participants-grid"></div>
+        <div class="row">
+       	  <button
+       	    id="addParticipantBtn"
+       	    class="icon-btn"
+       	    aria-label="Add participant"
+       	    title="Add participant"
+       	    >
+       	    +
+       	  </button>
+        </div>
+      </div>
+    </section>    
 
     <!-- GROUPS -->
     <section class="card accordion" data-open="true">
@@ -63,7 +45,23 @@
 	<span>Groups</span>
       </button>
       <div class="accordion-body">
-	<div id="groupsView"></div>
+        <div class="groups-controls">
+          <div class="row">
+            <label>
+              Number of groups
+              <input id="groupCountInput" type="number" min="1" value="2" />
+            </label>
+
+            <label>
+              Qualifiers to knockout (total)
+              <input id="qualifierCountInput" type="number" min="2" value="4" />
+            </label>
+
+            <button id="createGroupsBtn">Create groups</button>
+          </div>
+        </div>
+
+        <div id="groupsView"></div>
       </div>
     </section>
 

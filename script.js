@@ -550,33 +550,34 @@ function bracketSideLabel(ko, side) {
   return "TBD";
 }
 
+function initAccordions() {
+  document.querySelectorAll(".accordion").forEach(section => {
+    const header = section.querySelector(".accordion-header");
+    if (!header) return;
+
+    header.addEventListener("click", () => {
+      const isOpen = section.getAttribute("data-open") === "true";
+      section.setAttribute("data-open", String(!isOpen));
+    });
+  });
+}
+``
+
 /* -----------------------------
    State
 ----------------------------- */
-
 function defaultState() {
   return {
-    participants: [], // {id, name}
-    groupCount: 0,
-    qualifierCount: 0,
-
-    groups: [], // {id, name, memberIds: []}
-    groupMatches: [], // {id, groupId, aId, bId, winnerId}
-
-    // knockout is derived from groups+results:
-    // {
-    //   seeds: [ { groupId, rank } ... ],
-    //   rounds: [ [ {id,aSeed,bSeed,winnerPid} ] ... ]
-    // }
+    participants: [
+      { id: uid(), name: "1" },
+      { id: uid(), name: "2" },
+      { id: uid(), name: "3" },
+    ],
+    groups: [],
+    groupMatches: [],
     knockout: null,
-
-    // null unless a cross-group tiebreak is active
-    crossGroupTiebreak: null
-    // {
-    //   candidatePids: [...],
-    //   resolvedOrder: [...], // ordered list
-    //   places: m
-    // }
+    crossGroupTiebreak: null,
+    qualifierCount: 0, // will be set to participants.length later
   };
 }
 
@@ -1169,55 +1170,36 @@ function seedOrFlowLabel(ko, side) {
 /* -----------------------------
    Actions (Workflow)
 ----------------------------- */
+function createGroupsAndBracket() {
+  const groupCount = parseInt($("groupCountInput")?.value ?? "1", 10);
+  if (groupCount < 1) return;
+  if (state.participants.length < 3) return;
 
-function buildParticipants() {
-  const n = clampInt($("participantCount")?.value ?? 8, 2, 256);
-  const g = clampInt($("groupCount")?.value ?? 2, 1, 64);
-  const q = clampInt($("qualifierCount")?.value ?? 4, 2, n);
-
-  state.groupCount = g;
-  state.qualifierCount = Math.min(q, n);
-
-  state.participants = Array.from({ length: n }, (_, i) => ({
-    id: uid(),
-    name: String(i + 1)
-  }));
-
+  // Reset downstream state
   state.groups = [];
   state.groupMatches = [];
   state.knockout = null;
+  state.crossGroupTiebreak = null;
 
-  saveState();
-  renderAll();
+  state.qualifierCount = clampInt(
+    $("qualifierCountInput")?.value ?? 2,
+    2,
+    state.participants.length
+  );
+  const ids = shuffle(state.participants.map(p => p.id));
 
-  $("participantEditor")?.classList.remove("hidden");
-}
-
-/**
- * NEW WORKFLOW:
- * Randomize Groups => auto create group matches => auto build bracket
- */
-function randomizeGroupsAndAutoBuild() {
-  if (!state.participants.length) return;
-
-  const gCount = Math.max(1, state.groupCount);
-  const ids = shuffle(state.participants.map((p) => p.id));
-
-  state.groups = Array.from({ length: gCount }, (_, i) => ({
+  state.groups = Array.from({ length: groupCount }, (_, i) => ({
     id: uid(),
     name: `Group ${String.fromCharCode(65 + i)}`,
     memberIds: [],
-    tiebreak: null
+    tiebreak: null,
   }));
 
   ids.forEach((pid, idx) => {
-    state.groups[idx % gCount].memberIds.push(pid);
+    state.groups[idx % groupCount].memberIds.push(pid);
   });
 
-  // Auto create matches
   state.groupMatches = createMatchesForAllGroups();
-
-  // Auto build bracket
   rebuildKnockoutAuto();
 
   saveState();
@@ -1261,6 +1243,42 @@ function rebuildBracketOnly() {
 /* -----------------------------
    Rendering
    ----------------------------- */
+function renderParticipants() {
+  const host = $("participantsView");
+  if (!host) return;
+
+  host.innerHTML = "";
+
+  state.participants.forEach((p) => {
+    const row = document.createElement("div");
+    row.className = "row";
+
+    const input = document.createElement("input");
+    input.value = p.name;
+    input.onchange = (e) => {
+      p.name = e.target.value;
+      saveState();
+    };
+      
+    const remove = document.createElement("button");
+    remove.className = "icon-btn danger";
+    remove.innerHTML = "🗑";
+    remove.disabled = state.participants.length <= 3;
+    remove.setAttribute("aria-label", "Remove participant");
+    remove.title = "Remove participant";
+
+    remove.onclick = () => {
+      state.participants = state.participants.filter(x => x.id !== p.id);
+      saveState();
+      renderAll();
+    };
+
+    row.appendChild(input);
+    row.appendChild(remove);
+    host.appendChild(row);
+  });
+}
+
 function openCrossGroupManualTiebreak(candidatePids, places) {
   ui.activeGroupId = CROSS_UI_ID;
   ui.mode = "manual";
@@ -1696,7 +1714,6 @@ function renderGroupMatches() {
         renderGroups();       // standings update
         renderQualifiers();   // qualifiers/seed refs update
         renderKnockout();     // bracket update
-        renderButtons();
       });
 
       row.appendChild(select);
@@ -1866,14 +1883,20 @@ function renderKnockout() {
       `;
       row.appendChild(names);
 
-      // Highlight winner (step 3)
-      if (m.winnerPid === aPid) {
-        names.children[0].classList.add("winner");
-      }
-      if (m.winnerPid === bPid) {
-        names.children[2].classList.add("winner");
-      }
 
+      // Clear previous highlight
+      names.children[0].classList.remove("winner");
+      names.children[2].classList.remove("winner");
+	
+      // Highlight winner (step 3)
+      if (m.winnerPid) {
+        if (m.winnerPid === aPid) {
+          names.children[0].classList.add("winner");
+        }
+        if (m.winnerPid === bPid) {
+          names.children[2].classList.add("winner");
+        }
+      }
       // Winner UI (dropdown, visually hidden but functional)
       const select = document.createElement("select");
       select.className = "winner-select";
@@ -1927,22 +1950,13 @@ function renderKnockout() {
   });
 }
 
-
-function renderButtons() {
-  const assignBtn = $("assignGroupsBtn");
-  const matchesBtn = $("makeMatchesBtn");
-  const bracketBtn = $("makeBracketBtn");
-
-  if (assignBtn) assignBtn.disabled = state.participants.length === 0;
-}
-
 function renderAll() {
-  renderParticipantEditor();
+  renderParticipants();
   renderGroups();
   renderGroupMatches();
   renderQualifiers();
   renderKnockout();
-  renderButtons();
+  initAccordions();
 }
 
 /* -----------------------------
@@ -1951,11 +1965,15 @@ function renderAll() {
 
 safeOn("resetBtn", "click", resetState);
 safeOn("saveBtn", "click", saveState);
-
-safeOn("buildParticipantsBtn", "click", buildParticipants);
-
-// NEW: randomize triggers matches + bracket auto-setup
-safeOn("assignGroupsBtn", "click", randomizeGroupsAndAutoBuild);
+safeOn("createGroupsBtn", "click", createGroupsAndBracket);
+safeOn("addParticipantBtn", "click", () => {
+  state.participants.push({
+    id: uid(),
+    name: String(state.participants.length + 1),
+  });
+  saveState();
+  renderAll();
+});
 
 /* -----------------------------
    Initial render

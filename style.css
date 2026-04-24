@@ -480,3 +480,91 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-weight: 700;
   color: #4caf50; /* green highlight */
 }
+
+/* Compact participant list (groups-like density) */
+#participantsView .row {
+  align-items: center;
+  gap: 8px;
+  margin-top: 0;
+}
+
+#participantsView input {
+  padding: 6px 8px;
+  font-size: 13px;
+  height: 30px;
+}
+
+#participantsView button {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+#participantsView .row + .row {
+  margin-top: 6px;
+}
+
+/* Grid layout for participants (similar to groups view) */
+.participants-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px 12px;
+}
+
+/* Icon-style add button */
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.icon-btn:hover {
+  opacity: 0.9;
+}
+
+/* Delete icon button */
+.icon-btn.danger {
+  background: rgba(255, 91, 110, 0.15);
+  color: #ff5b6e;
+  border: 1px solid rgba(255, 91, 110, 0.3);
+}
+
+.icon-btn.danger:hover:not(:disabled) {
+  background: rgba(255, 91, 110, 0.25);
+}
+
+.icon-btn.danger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+
+/* Groups pane: spacing between controls and group cards */
+.groups-controls {
+  margin-bottom: 16px;
+}
+
+/* Align Create groups button with inputs */
+.groups-controls .row {
+  align-items: flex-end;
+}
+
+.groups-controls button {
+  height: 40px;           /* match input height */
+  padding: 0 16px;
+}
+
+.groups-controls label {
+  font-size: 13px;
+}
+
+.groups-controls input {
+  padding: 6px 8px;
+  font-size: 14px;
+}
