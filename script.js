@@ -514,6 +514,42 @@ function hasUnresolvedCrossGroupTie() {
   return !!getCrossGroupTie();
 }
 
+function bracketSideLabel(ko, side) {
+  const { q } = getQualificationParams();
+
+  // CASE 1: No side object at all
+  // This can mean either a real BYE *or* a withheld remainder seed.
+  if (!side) {
+    // If a cross-group tie is unresolved, this is NOT a real bye
+    if (hasUnresolvedCrossGroupTie()) {
+      return "TBD";
+    }
+    return "BYE";
+  }
+
+  // CASE 2: We can resolve a concrete participant
+  const pid = competitorPid(ko, side);
+  if (pid) {
+    return participantName(pid);
+  }
+
+  // CASE 3: Seed from group, but not resolvable yet
+  if (side.groupId && side.rank) {
+    // Remainder seed blocked by cross-group tie
+    if (hasUnresolvedCrossGroupTie() && side.rank > q) {
+      return "TBD";
+    }
+    return seedLabel(side);
+  }
+
+  // CASE 4: Waiting on earlier match
+  if (side.fromMatchId) {
+    return "TBD";
+  }
+
+  return "TBD";
+}
+
 /* -----------------------------
    State
 ----------------------------- */
@@ -1117,10 +1153,7 @@ function matchupKey(ko, match) {
 }
 
 function seedOrFlowLabel(ko, side) {
-  if (!side) return "BYE";
-  if (side.groupId && side.rank) return seedLabel(side);
-  if (side.fromMatchId) return `W(${side.fromMatchId.slice(0, 6)})`;
-  return "TBD";
+  return bracketSideLabel(ko, side);
 }
 
 /* -----------------------------
@@ -1804,8 +1837,8 @@ function renderKnockout() {
       row.dataset.matchId = m.id;
       row.dataset.matchIndex = String(i);
 
-      const aLabel = m.aSeed ? seedOrFlowLabel(state.knockout, m.aSeed) : "BYE";
-      const bLabel = m.bSeed ? seedOrFlowLabel(state.knockout, m.bSeed) : "BYE";
+      const aLabel = seedOrFlowLabel(state.knockout, m.aSeed);
+      const bLabel = seedOrFlowLabel(state.knockout, m.bSeed);
 
       const aPid = competitorPid(state.knockout, m.aSeed);
       const bPid = competitorPid(state.knockout, m.bSeed);
@@ -1819,14 +1852,14 @@ function renderKnockout() {
       `;
       row.appendChild(names);
 
-      const sub = document.createElement("div");
-      sub.className = "muted";
-      sub.style.fontSize = "12px";
-      sub.textContent =
-        aPid || bPid
-          ? `${aPid ? participantName(aPid) : "TBD"} vs ${bPid ? participantName(bPid) : "TBD"}`
-          : "Participants TBD";
-      row.appendChild(sub);
+      // const sub = document.createElement("div");
+      // sub.className = "muted";
+      // sub.style.fontSize = "12px";
+      // sub.textContent =
+      //   aPid || bPid
+      //     ? `${aPid ? participantName(aPid) : "TBD"} vs ${bPid ? participantName(bPid) : "TBD"}`
+      //     : "Participants TBD";
+      // row.appendChild(sub);
 
       const select = document.createElement("select");
       select.appendChild(new Option("Winner…", ""));

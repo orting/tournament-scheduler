@@ -107,13 +107,21 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .match {
   display:flex;
-  justify-content:space-between;
+  justify-content:center;
   align-items:center;
   gap: 10px;
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 10px 12px;
 }
+
+.match .seed,
+.match .team {
+  display: flex;
+  align-items: center;       /* vertical alignment inside line ✅ */
+  min-height: 1.4em;         /* prevents jumpy height changes */
+}
+
 .match .names { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 .vs { opacity: 0.8; }
 
@@ -266,7 +274,6 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   min-height: 64px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
 }
 
 /* Slightly tighter selects */
