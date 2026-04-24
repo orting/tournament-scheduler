@@ -11,6 +11,9 @@
 
 const STORAGE_KEY = "tournament_builder_state_v3";
 
+// Sentinel id used for cross-group manual tiebreak UI
+const CROSS_UI_ID = "__cross__";
+
 /* -----------------------------
    Utilities
 ----------------------------- */
@@ -255,6 +258,84 @@ function getQualificationParams() {
   return { G, K, q, r };
 }
 
+function getCrossGroupTie() {
+  // ✅ Freeze while the cross-group manual panel is open
+  if (ui.activeGroupId === CROSS_UI_ID && ui.mode === "manual") {
+    return { candidatePids: [...ui.crossCandidates], places: ui.crossPlaces };
+  }
+
+  // If an override exists, don't re-detect
+  if (state.crossGroupTiebreak) return null;
+
+  const { q, r } = getQualificationParams();
+  if (r === 0) return null;
+
+  // Determine group size spread (you said diff <= 1)
+  const sizes = state.groups.map(g => g.memberIds.length);
+  const minSize = Math.min(...sizes);
+  const maxSize = Math.max(...sizes);
+  const sizesDiffer = maxSize > minSize;
+
+  // Compute adjusted wins for the rank-(q+1) candidate in each group
+  const candidates = [];
+
+  for (const g of state.groups) {
+    const ranking = groupRanking(g.id);
+    if (ranking.length < q + 1) continue;
+
+    const candidatePid = ranking[q].pid;         // (q+1)th in this group
+    const ignoreLowestInThisGroup = sizesDiffer && (g.memberIds.length === maxSize);
+
+    const lowestPid = ignoreLowestInThisGroup
+      ? ranking[ranking.length - 1].pid
+      : null;
+
+    let wins = 0;
+
+    for (const m of state.groupMatches) {
+      if (m.groupId !== g.id) continue;
+      if (!m.winnerId) continue;
+
+      const involved = (m.aId === candidatePid || m.bId === candidatePid);
+      if (!involved) continue;
+
+      const opponent = (m.aId === candidatePid) ? m.bId : m.aId;
+
+      // If groups differ in size, ignore matches vs lowest only in larger groups
+      if (lowestPid && opponent === lowestPid) continue;
+
+      if (m.winnerId === candidatePid) wins += 1;
+    }
+
+    candidates.push({ pid: candidatePid, groupId: g.id, wins });
+  }
+
+  if (candidates.length === 0) return null;
+
+  // Sort by adjusted wins desc
+  candidates.sort((a, b) => b.wins - a.wins);
+
+  // If we can fill the remainder spots without ambiguity, no cross-group tie UI
+  if (candidates.length <= r) return null;
+
+  const cutoffWins = candidates[r - 1].wins;
+  const nextWins = candidates[r]?.wins;
+
+  // If the boundary isn't tied, no manual tiebreak needed
+  if (nextWins === undefined || cutoffWins !== nextWins) return null;
+
+  // Tie group = everyone with wins == cutoffWins
+  const tiedGroup = candidates.filter(c => c.wins === cutoffWins);
+
+  // If tiedGroup size exceeds remaining places at this boundary -> manual tiebreak needed
+  if (tiedGroup.length <= r) return null;
+
+  return {
+    candidatePids: tiedGroup.map(c => c.pid),
+    places: r
+  };
+}
+
 /**
  * Returns a Set(pid) of teams that are tied ACROSS a qualification boundary
  * inside this group, but ONLY when the group is decided.
@@ -425,6 +506,9 @@ function isGuaranteedFromGroup(groupId, pid) {
   return clinched.get(idx + 1) === pid;
 }
 
+function hasManualCrossGroupTiebreak() {
+  return !!state.crossGroupTiebreak;
+}
 
 /* -----------------------------
    State
@@ -444,7 +528,15 @@ function defaultState() {
     //   seeds: [ { groupId, rank } ... ],
     //   rounds: [ [ {id,aSeed,bSeed,winnerPid} ] ... ]
     // }
-    knockout: null
+    knockout: null,
+      
+    // null unless a cross-group tiebreak is active
+    crossGroupTiebreak: null 
+    // {
+    //   candidatePids: [...],
+    //   resolvedOrder: [...], // ordered list
+    //   places: m
+    // }
   };
 }
 
@@ -453,6 +545,8 @@ let ui = {
   activeGroupId: null,     // which group has the tiebreak panel open
   mode: null,              // "manual"
   manualOrder: [],         // array of pids (current ordering)
+  crossPlaces: 0,
+  crossCandidates: [],
 };
 
 function loadState() {
@@ -739,33 +833,65 @@ function headToHeadWinner(aPid, bPid, groupId) {
  * seedRef = { groupId, rank } where rank starts at 1.
  */
 function computeSeedRefsTotal() {
-  const total = Math.min(state.qualifierCount, state.participants.length);
+  const { q, r } = getQualificationParams();
   if (!state.groups.length) return [];
 
-  const rankings = state.groups.map((g) => ({
-    groupId: g.id,
-    ranking: groupRanking(g.id)
-  }));
+  const seeds = [];
 
-  const picked = [];
-  let rankIndex = 0;
-
-  while (picked.length < total) {
-    let pickedSomething = false;
-
-    for (const gr of rankings) {
-      const row = gr.ranking[rankIndex];
-      if (row && picked.length < total) {
-        picked.push({ groupId: gr.groupId, rank: rankIndex + 1 });
-        pickedSomething = true;
-      }
+  //
+  // 1) Guaranteed qualifiers: ranks 1..q from every group
+  //
+  for (const g of state.groups) {
+    const ranking = groupRanking(g.id);
+    for (let rank = 1; rank <= q && rank <= ranking.length; rank++) {
+      seeds.push({ groupId: g.id, rank });
     }
-
-    if (!pickedSomething) break;
-    rankIndex += 1;
   }
 
-  return picked;
+  //
+  // 2) Remainder spots (rank q+1), possibly resolved manually
+  //
+  if (r > 0) {
+    // ✅ Manual cross-group resolution exists
+    if (
+      state.crossGroupTiebreak &&
+      state.crossGroupTiebreak.places === r
+    ) {
+      const chosen = state.crossGroupTiebreak.resolvedOrder.slice(0, r);
+
+      for (const pid of chosen) {
+        const g = state.groups.find(gr => gr.memberIds.includes(pid));
+        if (g) {
+          seeds.push({ groupId: g.id, rank: q + 1 });
+        }
+      }
+
+      return seeds;
+    }
+
+    // ❌ No manual resolution → fall back to automatic selection
+    const candidates = [];
+
+    for (const g of state.groups) {
+      const ranking = groupRanking(g.id);
+      if (ranking.length < q + 1) continue;
+
+      const row = ranking[q];
+      candidates.push({
+        groupId: g.id,
+        pid: row.pid,
+        wins: row.points
+      });
+    }
+
+    candidates.sort((a, b) => b.wins - a.wins);
+
+    for (const c of candidates.slice(0, r)) {
+      seeds.push({ groupId: c.groupId, rank: q + 1 });
+    }
+  }
+
+  return seeds;
 }
 
 function seedLabel(seedRef) {
@@ -1072,7 +1198,41 @@ function rebuildBracketOnly() {
 
 /* -----------------------------
    Rendering
------------------------------ */
+   ----------------------------- */
+function openCrossGroupManualTiebreak(candidatePids, places) {
+  ui.activeGroupId = CROSS_UI_ID;
+  ui.mode = "manual";
+  ui.manualOrder = [...candidatePids];
+  ui.crossPlaces = places;
+  ui.crossCandidates = [...candidatePids];
+  renderAll();
+}
+
+function applyCrossGroupManualTiebreak() {
+  state.crossGroupTiebreak = {
+    candidatePids: [...ui.crossCandidates],
+    resolvedOrder: [...ui.manualOrder],
+    places: ui.crossPlaces
+  };
+
+  rebuildKnockoutAuto(); // IMPORTANT
+  saveState();
+  ui.activeGroupId = null;
+  ui.mode = null;
+  ui.manualOrder = [];
+  ui.crossPlaces = 0;
+  ui.crossCandidates = [];
+  renderAll();
+}
+
+function clearCrossGroupTiebreak() {
+  state.crossGroupTiebreak = null;
+
+  rebuildKnockoutAuto();
+  saveState();
+  renderAll();
+}
+
 function openManualTiebreak(groupId, tiedSet) {
   // Initialize order in current ranking order (more intuitive than random)
   const ranking = groupRanking(groupId);
@@ -1172,6 +1332,77 @@ function renderManualTiebreakPanel(group) {
   return panel;
 }
 
+function renderManualCrossGroupPanel() {
+  const panel = document.createElement("div");
+  panel.className = "tiebreak-panel";
+
+  const title = document.createElement("p");
+  title.className = "muted";
+  title.textContent = `Cross-group tiebreak: order tied teams (top ${ui.crossPlaces} qualify).`;
+  panel.appendChild(title);
+
+  const list = document.createElement("div");
+  list.className = "tiebreak-list";
+
+  ui.manualOrder.forEach((pid, idx) => {
+    const row = document.createElement("div");
+    row.className = "tiebreak-row";
+
+    const name = document.createElement("div");
+    name.className = "tiebreak-name";
+    const g = state.groups.find(gr => gr.memberIds.includes(pid));
+    name.textContent = `${participantName(pid)} (${g ? g.name : "?"})`;
+
+    const controls = document.createElement("div");
+    controls.className = "tiebreak-row-controls";
+
+    const up = document.createElement("button");
+    up.className = "secondary";
+    up.textContent = "↑";
+    up.disabled = idx === 0;
+    up.onclick = () => moveInManualOrder(idx, -1);
+
+    const down = document.createElement("button");
+    down.className = "secondary";
+    down.textContent = "↓";
+    down.disabled = idx === ui.manualOrder.length - 1;
+    down.onclick = () => moveInManualOrder(idx, +1);
+
+    controls.appendChild(up);
+    controls.appendChild(down);
+
+    row.appendChild(name);
+    row.appendChild(controls);
+    list.appendChild(row);
+  });
+
+  panel.appendChild(list);
+
+  const actions = document.createElement("div");
+  actions.className = "row";
+
+  const save = document.createElement("button");
+  save.textContent = "Save cross-group tiebreak";
+  save.onclick = applyCrossGroupManualTiebreak;
+
+  const cancel = document.createElement("button");
+  cancel.className = "secondary";
+  cancel.textContent = "Cancel";
+  cancel.onclick = () => {
+    ui.activeGroupId = null;
+    ui.mode = null;
+    ui.manualOrder = [];
+    ui.crossPlaces = 0;
+    ui.crossCandidates = [];
+    renderAll();
+  };
+
+  actions.appendChild(save);
+  actions.appendChild(cancel);
+  panel.appendChild(actions);
+
+  return panel;
+}
 
 function renderGroupTiebreakControls(group, tiedSet) {
   const container = document.createElement("div");
@@ -1443,6 +1674,66 @@ function renderQualifiers() {
       </p>
     </div>
   `;
+  const cross = getCrossGroupTie();
+
+  // CASE 1: Cross-group tiebreak already resolved manually
+  if (hasManualCrossGroupTiebreak()) {
+    const card = document.createElement("div");
+    card.className = "tiebreak-panel";
+
+    const msg = document.createElement("p");
+    msg.className = "muted";
+    msg.textContent =
+      "Cross-group qualification tie resolved manually.";
+    card.appendChild(msg);
+
+    const details = document.createElement("p");
+    details.textContent =
+      "Qualified (in order): " +
+      state.crossGroupTiebreak.resolvedOrder
+        .slice(0, state.crossGroupTiebreak.places)
+        .map(pid => participantName(pid))
+        .join(", ");
+    card.appendChild(details);
+
+    const row = document.createElement("div");
+    row.className = "row";
+
+    const clearBtn = document.createElement("button");
+    clearBtn.className = "secondary";
+    clearBtn.textContent = "Clear cross-group tiebreak";
+    clearBtn.onclick = clearCrossGroupTiebreak;
+
+    row.appendChild(clearBtn);
+    card.appendChild(row);
+
+    qHost.appendChild(card);
+  }
+
+  // CASE 2: Cross-group tie exists and needs resolution
+  else if (cross) {
+    const card = document.createElement("div");
+    card.className = "tiebreak-panel";
+
+    const msg = document.createElement("p");
+    msg.className = "muted";
+    msg.textContent =
+      `Cross-group tie for the last ${cross.places} qualification spot(s).`;
+    card.appendChild(msg);
+
+    const btn = document.createElement("button");
+    btn.textContent = "Resolve cross-group tie manually";
+    btn.onclick = () =>
+      openCrossGroupManualTiebreak(cross.candidatePids, cross.places);
+
+    card.appendChild(btn);
+    qHost.appendChild(card);
+  }
+
+  // CASE 3: Manual cross-group panel currently open
+  if (ui.activeGroupId === "__cross__" && ui.mode === "manual") {
+    qHost.appendChild(renderManualCrossGroupPanel());
+  }    
 }
 
 function renderKnockout() {
