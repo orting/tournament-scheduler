@@ -488,8 +488,9 @@ function defaultState() {
 let state = loadState() ?? defaultState();
 let ui = {
   activeGroupId: null,     // which group has the tiebreak panel open
-  mode: null,              // "manual" | "mini" (we’ll use manual now)
-  manualOrder: []          // array of pids (current ordering)
+  mode: null,              // "manual" | "mini"
+  manualOrder: [],         // array of pids (current ordering)
+  mini: null               // { byePid, matches: [{aPid,bPid,winnerPid}] }
 };
 
 function loadState() {
@@ -1088,6 +1089,26 @@ function rebuildBracketOnly() {
   renderAll();
 }
 
+function createMiniTiebreak(tiedPids) {
+  const shuffled = shuffle([...tiedPids]);
+  let byePid = null;
+
+  if (shuffled.length % 2 === 1) {
+    byePid = shuffled.pop(); // random because shuffled
+  }
+
+  const matches = [];
+  for (let i = 0; i < shuffled.length; i += 2) {
+    matches.push({
+      aPid: shuffled[i],
+      bPid: shuffled[i + 1],
+      winnerPid: null
+    });
+  }
+
+  return { byePid, matches };
+}
+
 /* -----------------------------
    Rendering
 ----------------------------- */
@@ -1190,6 +1211,87 @@ function renderManualTiebreakPanel(group) {
   return panel;
 }
 
+function renderMiniTiebreakPanel(group) {
+  const panel = document.createElement("div");
+  panel.className = "tiebreak-panel";
+
+  const title = document.createElement("p");
+  title.className = "muted";
+  title.textContent = "Mini knockout tiebreak (winner ranks highest):";
+  panel.appendChild(title);
+
+  if (ui.mini.byePid) {
+    const bye = document.createElement("p");
+    bye.className = "muted";
+    bye.textContent = `Bye: ${participantName(ui.mini.byePid)}`;
+    panel.appendChild(bye);
+  }
+
+  ui.mini.matches.forEach((m, idx) => {
+    const row = document.createElement("div");
+    row.className = "tiebreak-row";
+
+    const label = document.createElement("div");
+    label.textContent =
+      `${participantName(m.aPid)} vs ${participantName(m.bPid)}`;
+
+    const select = document.createElement("select");
+    select.innerHTML = `
+      <option value="">Winner…</option>
+      <option value="${m.aPid}">${participantName(m.aPid)}</option>
+      <option value="${m.bPid}">${participantName(m.bPid)}</option>
+    `;
+    select.value = m.winnerPid ?? "";
+    select.onchange = () => {
+      m.winnerPid = select.value || null;
+      renderAll();
+    };
+
+    row.appendChild(label);
+    row.appendChild(select);
+    panel.appendChild(row);
+  });
+
+  const allChosen = ui.mini.matches.every(m => m.winnerPid);
+
+  const actions = document.createElement("div");
+  actions.className = "row";
+
+  const finish = document.createElement("button");
+  finish.textContent = "Finish tiebreak";
+  finish.disabled = !allChosen;
+  finish.onclick = () => {
+    // Winner order: winners first, then losers, bye treated as winner
+    const winners = ui.mini.matches.map(m => m.winnerPid);
+    if (ui.mini.byePid) winners.push(ui.mini.byePid);
+
+    const losers = ui.mini.matches
+      .flatMap(m => [m.aPid, m.bPid])
+      .filter(pid => !winners.includes(pid));
+
+    applyManualTiebreakToGroup(group.id, winners.concat(losers));
+    ui.activeGroupId = null;
+    ui.mode = null;
+    ui.mini = null;
+  };
+
+  const cancel = document.createElement("button");
+  cancel.className = "secondary";
+  cancel.textContent = "Cancel";
+  cancel.onclick = () => {
+    ui.activeGroupId = null;
+    ui.mode = null;
+    ui.mini = null;
+    renderAll();
+  };
+
+  actions.appendChild(finish);
+  actions.appendChild(cancel);
+  panel.appendChild(actions);
+
+  return panel;
+}
+
 function renderGroupTiebreakControls(group, tiedSet) {
   const container = document.createElement("div");
   container.className = "tiebreak-controls";
@@ -1202,8 +1304,10 @@ function renderGroupTiebreakControls(group, tiedSet) {
   const btnMini = document.createElement("button");
   btnMini.textContent = "Resolve with mini knockout";
   btnMini.onclick = () => {
-    // Placeholder – next step
-    console.log("Mini knockout selected for group", group.id, [...tiedSet]);
+    ui.activeGroupId = group.id;
+    ui.mode = "mini";
+    ui.mini = createMiniTiebreak([...tiedSet]);
+    renderAll();
   };
 
   const btnManual = document.createElement("button");
@@ -1350,9 +1454,15 @@ function renderGroups() {
       const controls = renderGroupTiebreakControls(g, tiedSet);
       el.appendChild(controls);
     }
-    if (ui.activeGroupId === g.id && ui.mode === "manual") {
-      el.appendChild(renderManualTiebreakPanel(g));
+    if (ui.activeGroupId === g.id) {
+      if (ui.mode === "manual") {
+        el.appendChild(renderManualTiebreakPanel(g));
+      }
+      else if (ui.mode === "mini") {
+        el.appendChild(renderMiniTiebreakPanel(g));
+      }
     }
+
     if (g.tiebreak) {
       const tb = document.createElement("div");
       tb.className = "tiebreak-controls";
