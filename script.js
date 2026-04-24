@@ -267,6 +267,13 @@ function getQualificationParams() {
  * of the boundary, so internal tiebreak resolution is required.
  */
 function tiedAtQualificationBoundaries(groupId) {
+  const g = state.groups.find(gr => gr.id === groupId);
+  if (!g) return new Set();
+
+  // ✅ If a tiebreak has been applied, the tie is resolved
+  if (g.tiebreak) return new Set();
+
+  // Existing logic follows
   if (!isGroupDecided(groupId)) return new Set();
 
   const ranking = groupRanking(groupId);
@@ -391,6 +398,14 @@ function clearGroupTiebreak(groupId) {
 
   saveState();
   renderAll();
+}
+
+function isGuaranteedFromGroup(groupId, pid) {
+  const ranking = groupRanking(groupId);
+  const { q } = getQualificationParams();
+  const idx = ranking.findIndex(r => r.pid === pid);
+  if (idx === -1) return false;
+  return idx + 1 <= q; // rank is 1-based
 }
 
 /* -----------------------------
@@ -1237,9 +1252,6 @@ function renderGroups() {
     const tiedSet = tiedAtQualificationBoundaries(g.id);
     const ranking = groupRanking(g.id);
     const boundaryTied = allBoundaryTiedPids();
-    const qualifiedSet = new Set(
-      [...clinchedQualifiers()].filter(pid => !boundaryTied.has(pid))
-    );
     const table = document.createElement("table");
     table.className = "table";
     table.innerHTML = `
@@ -1249,7 +1261,7 @@ function renderGroups() {
       <tbody>
         ${ranking.map((r, i) => {
           const rank = i + 1;
-          const isQualified = qualifiedSet.has(r.pid);
+          const isQualified = isGuaranteedFromGroup(g.id, r.pid);
           const isTied = tiedSet.has(r.pid);
           const marker = isTied ? " ⚠️" : (isQualified ? " ✅" : "");
           return `
