@@ -457,3 +457,26 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .tiebreak-row:hover {
   background: rgba(255,255,255,0.04);
 }
+
+
+/* Hide the select but keep it functional */
+.match .winner-select {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Make it obvious the match is clickable */
+.match.clickable {
+  cursor: pointer;
+}
+
+.match.clickable:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.match .winner {
+  font-weight: 700;
+  color: #4caf50; /* green highlight */
+}

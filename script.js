@@ -1068,7 +1068,7 @@ function findMatchById(ko, matchId) {
 }
 
 function propagateKnockoutWinners(ko) {
-  // Fill later rounds with "fromMatchId" pointers
+  // Wire later rounds to previous rounds
   for (let r = 1; r < ko.rounds.length; r++) {
     const prev = ko.rounds[r - 1];
     const cur = ko.rounds[r];
@@ -1079,19 +1079,22 @@ function propagateKnockoutWinners(ko) {
 
       cur[i].aSeed = srcA ? { fromMatchId: srcA.id } : null;
       cur[i].bSeed = srcB ? { fromMatchId: srcB.id } : null;
-      cur[i].winnerPid = null;
     }
   }
 
-  // ✅ IMPORTANT CHANGE:
-  // Do NOT auto-advance if a cross-group tie is unresolved
+  // ❌ Do NOT touch winnerPid here – ever.
+  // User input must be preserved.
+
+  // Block only AUTO-ADVANCE while cross-group tie unresolved
   if (hasUnresolvedCrossGroupTie()) {
     return;
   }
 
-  // Otherwise, allow auto-advance for real byes
+  // Allow true bye auto-advancement in first round only
   const first = ko.rounds[0];
   for (const m of first) {
+    if (m.winnerPid) continue; // preserve user choice
+
     const aPid = competitorPid(ko, m.aSeed);
     const bPid = competitorPid(ko, m.bSeed);
 
@@ -1101,6 +1104,13 @@ function propagateKnockoutWinners(ko) {
       m.winnerPid = bPid;
     }
   }
+}
+
+function setKnockoutWinner(match, pid) {
+  match.winnerPid = pid;
+  rebuildKnockoutAuto();   // propagate forward
+  saveState();
+  renderAll();
 }
 
 /**
@@ -1798,10 +1808,10 @@ function renderKnockout() {
     return;
   }
 
-  // Keep propagation current
+  // Keep propagation current (but do not wipe user-entered winners)
   propagateKnockoutWinners(state.knockout);
 
-  bHost.className = "";       // bracketView itself stays a normal container
+  bHost.className = "";
   bHost.innerHTML = "";
 
   // Canvas holds both SVG lines and the bracket columns so they scroll together
@@ -1815,17 +1825,20 @@ function renderKnockout() {
   const grid = document.createElement("div");
   grid.className = "bracket-classic";
 
-  // order matters: svg behind, grid in front
   canvas.appendChild(svg);
   canvas.appendChild(grid);
   bHost.appendChild(canvas);
 
+  // Render rounds
   state.knockout.rounds.forEach((round, rIdx) => {
     const col = document.createElement("div");
     col.className = "bracket-round";
     col.dataset.round = String(rIdx);
 
-    col.innerHTML = `<h3 class="bracket-round-heading">Round ${rIdx + 1}</h3>`;
+    const heading = document.createElement("h3");
+    heading.className = "bracket-round-heading";
+    heading.textContent = `Round ${rIdx + 1}`;
+    col.appendChild(heading);
 
     const matchesWrap = document.createElement("div");
     matchesWrap.className = "round-matches";
@@ -1837,6 +1850,7 @@ function renderKnockout() {
       row.dataset.matchId = m.id;
       row.dataset.matchIndex = String(i);
 
+      // One-line labels (your current seedOrFlowLabel should already do this)
       const aLabel = seedOrFlowLabel(state.knockout, m.aSeed);
       const bLabel = seedOrFlowLabel(state.knockout, m.bSeed);
 
@@ -1852,17 +1866,19 @@ function renderKnockout() {
       `;
       row.appendChild(names);
 
-      // const sub = document.createElement("div");
-      // sub.className = "muted";
-      // sub.style.fontSize = "12px";
-      // sub.textContent =
-      //   aPid || bPid
-      //     ? `${aPid ? participantName(aPid) : "TBD"} vs ${bPid ? participantName(bPid) : "TBD"}`
-      //     : "Participants TBD";
-      // row.appendChild(sub);
+      // Highlight winner (step 3)
+      if (m.winnerPid === aPid) {
+        names.children[0].classList.add("winner");
+      }
+      if (m.winnerPid === bPid) {
+        names.children[2].classList.add("winner");
+      }
 
+      // Winner UI (dropdown, visually hidden but functional)
       const select = document.createElement("select");
+      select.className = "winner-select";
       select.appendChild(new Option("Winner…", ""));
+
       if (aPid) select.appendChild(new Option(participantName(aPid), aPid));
       if (bPid) select.appendChild(new Option(participantName(bPid), bPid));
 
@@ -1876,6 +1892,14 @@ function renderKnockout() {
         renderKnockout();
       });
 
+      // ✅ Append select, but we’ll hide it with CSS
+      row.appendChild(select);
+
+      // ✅ Make the entire match box clickable
+      if (aPid && bPid) {
+        row.classList.add("clickable");
+      }
+
       matchesWrap.appendChild(row);
     });
 
@@ -1883,15 +1907,18 @@ function renderKnockout() {
     grid.appendChild(col);
   });
 
-  // Champion
+  // Champion (only show if final has a winner)
   const lastRound = state.knockout.rounds[state.knockout.rounds.length - 1];
   const final = lastRound?.[0];
+
   if (final?.winnerPid) {
     const champ = document.createElement("div");
     champ.className = "subcard";
     champ.innerHTML = `<h3>🏆 Champion: ${escapeHtml(participantName(final.winnerPid))}</h3>`;
     bHost.appendChild(champ);
   }
+
+  // Align + redraw connectors after layout
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       alignBracketMatches();
@@ -1899,6 +1926,7 @@ function renderKnockout() {
     });
   });
 }
+
 
 function renderButtons() {
   const assignBtn = $("assignGroupsBtn");
