@@ -510,6 +510,10 @@ function hasManualCrossGroupTiebreak() {
   return !!state.crossGroupTiebreak;
 }
 
+function hasUnresolvedCrossGroupTie() {
+  return !!getCrossGroupTie();
+}
+
 /* -----------------------------
    State
 ----------------------------- */
@@ -529,9 +533,9 @@ function defaultState() {
     //   rounds: [ [ {id,aSeed,bSeed,winnerPid} ] ... ]
     // }
     knockout: null,
-      
+
     // null unless a cross-group tiebreak is active
-    crossGroupTiebreak: null 
+    crossGroupTiebreak: null
     // {
     //   candidatePids: [...],
     //   resolvedOrder: [...], // ordered list
@@ -869,25 +873,48 @@ function computeSeedRefsTotal() {
       return seeds;
     }
 
-    // ❌ No manual resolution → fall back to automatic selection
-    const candidates = [];
+    // 2) Remainder spots (rank q+1)
+    if (r > 0) {
+      const crossTie = getCrossGroupTie();
 
-    for (const g of state.groups) {
-      const ranking = groupRanking(g.id);
-      if (ranking.length < q + 1) continue;
+      // ✅ Case A: manual resolution exists → use it
+      if (
+        state.crossGroupTiebreak &&
+        state.crossGroupTiebreak.places === r
+      ) {
+        const chosen = state.crossGroupTiebreak.resolvedOrder.slice(0, r);
 
-      const row = ranking[q];
-      candidates.push({
-        groupId: g.id,
-        pid: row.pid,
-        wins: row.points
-      });
-    }
+        for (const pid of chosen) {
+          const g = state.groups.find(gr => gr.memberIds.includes(pid));
+          if (g) seeds.push({ groupId: g.id, rank: q + 1 });
+        }
+      }
 
-    candidates.sort((a, b) => b.wins - a.wins);
+      // ✅ Case B: no tie exists → safe to auto-select
+      else if (!crossTie) {
+        const candidates = [];
 
-    for (const c of candidates.slice(0, r)) {
-      seeds.push({ groupId: c.groupId, rank: q + 1 });
+        for (const g of state.groups) {
+          const ranking = groupRanking(g.id);
+          if (ranking.length >= q + 1) {
+            const row = ranking[q];
+            candidates.push({
+              groupId: g.id,
+              pid: row.pid,
+              wins: row.points
+            });
+          }
+        }
+
+        candidates.sort((a, b) => b.wins - a.wins);
+
+        for (const c of candidates.slice(0, r)) {
+          seeds.push({ groupId: c.groupId, rank: q + 1 });
+        }
+      }
+
+      // ❌ Case C: cross-group tie exists but unresolved
+      // → DO NOTHING (leave remainder spots empty)
     }
   }
 
@@ -1011,39 +1038,31 @@ function propagateKnockoutWinners(ko) {
     const cur = ko.rounds[r];
 
     for (let i = 0; i < cur.length; i++) {
-      const m1 = prev[i * 2];
-      const m2 = prev[i * 2 + 1];
+      const srcA = prev[i * 2];
+      const srcB = prev[i * 2 + 1];
 
-      cur[i].aSeed = { fromMatchId: m1.id };
-      cur[i].bSeed = { fromMatchId: m2.id };
-
-      // If current winner is no longer valid, clear it
-      const aPid = competitorPid(ko, cur[i].aSeed);
-      const bPid = competitorPid(ko, cur[i].bSeed);
-      if (cur[i].winnerPid && cur[i].winnerPid !== aPid && cur[i].winnerPid !== bPid) {
-        cur[i].winnerPid = null;
-      }
-
-      // Auto-advance if exactly one side is known and the other is absent/unknown
-      // (This mainly affects bye paths early on)
-      if (aPid && !bPid) cur[i].winnerPid = aPid;
-      if (bPid && !aPid) cur[i].winnerPid = bPid;
+      cur[i].aSeed = srcA ? { fromMatchId: srcA.id } : null;
+      cur[i].bSeed = srcB ? { fromMatchId: srcB.id } : null;
+      cur[i].winnerPid = null;
     }
   }
 
-  // Also auto-advance in first round for byes when a competitor becomes known
+  // ✅ IMPORTANT CHANGE:
+  // Do NOT auto-advance if a cross-group tie is unresolved
+  if (hasUnresolvedCrossGroupTie()) {
+    return;
+  }
+
+  // Otherwise, allow auto-advance for real byes
   const first = ko.rounds[0];
   for (const m of first) {
     const aPid = competitorPid(ko, m.aSeed);
     const bPid = competitorPid(ko, m.bSeed);
 
-    // If one side is a bye (null seed), propagate the known one
-    if (m.aSeed && !m.bSeed && aPid) m.winnerPid = aPid;
-    if (m.bSeed && !m.aSeed && bPid) m.winnerPid = bPid;
-
-    // If winner exists but no longer matches competitors, clear
-    if (m.winnerPid && m.winnerPid !== aPid && m.winnerPid !== bPid) {
-      m.winnerPid = null;
+    if (aPid && !bPid) {
+      m.winnerPid = aPid;
+    } else if (!aPid && bPid) {
+      m.winnerPid = bPid;
     }
   }
 }
@@ -1733,7 +1752,7 @@ function renderQualifiers() {
   // CASE 3: Manual cross-group panel currently open
   if (ui.activeGroupId === "__cross__" && ui.mode === "manual") {
     qHost.appendChild(renderManualCrossGroupPanel());
-  }    
+  }
 }
 
 function renderKnockout() {
