@@ -313,7 +313,6 @@ function tiedAtQualificationBoundaries(groupId) {
   return tied;
 }
 
-
 function allBoundaryTiedPids() {
   const tied = new Set();
   for (const g of state.groups) {
@@ -328,6 +327,76 @@ function groupStatus(groupId) {
   if (!isGroupDecided(groupId)) return "in-progress";
   const tied = tiedAtQualificationBoundaries(groupId);
   return tied.size > 0 ? "undecided-tie" : "decided";
+}
+
+function buildMiniKnockoutForTie(tiedPids) {
+  // Randomize order for fairness
+  const shuffled = shuffle([...tiedPids]);
+
+  // If odd, give exactly one random bye
+  let byePid = null;
+  if (shuffled.length % 2 === 1) {
+    byePid = shuffled.pop(); // random because shuffled
+  }
+
+  // Pair remaining players
+  const matches = [];
+  for (let i = 0; i < shuffled.length; i += 2) {
+    matches.push({
+      id: uid(),
+      aPid: shuffled[i],
+      bPid: shuffled[i + 1],
+      winnerPid: null
+    });
+  }
+
+  return {
+    byePid,     // null or pid
+    matches,    // first-round matches only
+    winners: [] // to be filled as user selects winners
+  };
+}
+
+function resolveMiniKnockout(mini) {
+  const order = [];
+
+  // Winner(s) from played matches
+  const winners = mini.matches.map(m => m.winnerPid).filter(Boolean);
+
+  // If there was a bye, treat it as an implicit win
+  if (mini.byePid) winners.push(mini.byePid);
+
+  // If we now have more than one winner, recurse
+  if (winners.length > 1) {
+    const nextMini = buildMiniKnockoutForTie(winners);
+    // carry over state if needed (UI will handle)
+    return resolveMiniKnockout(nextMini);
+  }
+
+  // Final winner
+  order.push(winners[0]);
+
+  // Losers in reverse order of elimination (simple but sufficient)
+  const losers = mini.matches
+    .flatMap(m => [m.aPid, m.bPid])
+    .filter(pid => pid !== mini.matches.find(m => m.winnerPid)?.winnerPid);
+
+  return order.concat(losers);
+}
+
+function applyMiniTiebreakToGroup(groupId, mini) {
+  const g = state.groups.find(gr => gr.id === groupId);
+  if (!g) return;
+
+  const resolvedOrder = resolveMiniKnockout(mini);
+
+  g.tiebreak = {
+    type: "mini",
+    resolvedOrder
+  };
+
+  saveState();
+  renderAll();
 }
 
 /* -----------------------------
@@ -456,6 +525,21 @@ function groupRanking(groupId) {
 
     return a.name.localeCompare(b.name);
   });
+
+  if (g.tiebreak?.resolvedOrder?.length) {
+    const order = new Map(
+      g.tiebreak.resolvedOrder.map((pid, i) => [pid, i])
+    );
+
+    rows.sort((a, b) => {
+      const ia = order.get(a.pid);
+      const ib = order.get(b.pid);
+      if (ia != null && ib != null) return ia - ib;
+      if (ia != null) return -1;
+      if (ib != null) return 1;
+      return 0;
+    });
+  }
 
   return rows;
 }
@@ -880,7 +964,8 @@ function randomizeGroupsAndAutoBuild() {
   state.groups = Array.from({ length: gCount }, (_, i) => ({
     id: uid(),
     name: `Group ${String.fromCharCode(65 + i)}`,
-    memberIds: []
+    memberIds: [],
+    tiebreak: null
   }));
 
   ids.forEach((pid, idx) => {
