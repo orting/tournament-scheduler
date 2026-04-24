@@ -486,6 +486,11 @@ function defaultState() {
 }
 
 let state = loadState() ?? defaultState();
+let ui = {
+  activeGroupId: null,     // which group has the tiebreak panel open
+  mode: null,              // "manual" | "mini" (we’ll use manual now)
+  manualOrder: []          // array of pids (current ordering)
+};
 
 function loadState() {
   try {
@@ -1086,6 +1091,104 @@ function rebuildBracketOnly() {
 /* -----------------------------
    Rendering
 ----------------------------- */
+function openManualTiebreak(groupId, tiedSet) {
+  // Initialize order in current ranking order (more intuitive than random)
+  const ranking = groupRanking(groupId);
+  const tied = new Set(tiedSet);
+  const ordered = ranking.filter(r => tied.has(r.pid)).map(r => r.pid);
+
+  ui.activeGroupId = groupId;
+  ui.mode = "manual";
+  ui.manualOrder = ordered;
+
+  renderAll();
+}
+
+function closeTiebreakPanel() {
+  ui.activeGroupId = null;
+  ui.mode = null;
+  ui.manualOrder = [];
+  renderAll();
+}
+
+function moveInManualOrder(index, delta) {
+  const j = index + delta;
+  if (j < 0 || j >= ui.manualOrder.length) return;
+
+  const arr = [...ui.manualOrder];
+  [arr[index], arr[j]] = [arr[j], arr[index]];
+  ui.manualOrder = arr;
+
+  renderAll();
+}
+
+function renderManualTiebreakPanel(group) {
+  const panel = document.createElement("div");
+  panel.className = "tiebreak-panel";
+
+  const title = document.createElement("p");
+  title.className = "muted";
+  title.textContent = "Manual tiebreak: order the tied teams (top wins the tie).";
+  panel.appendChild(title);
+
+  const list = document.createElement("div");
+  list.className = "tiebreak-list";
+
+  ui.manualOrder.forEach((pid, idx) => {
+    const row = document.createElement("div");
+    row.className = "tiebreak-row";
+
+    const name = document.createElement("div");
+    name.className = "tiebreak-name";
+    name.textContent = participantName(pid);
+
+    const controls = document.createElement("div");
+    controls.className = "tiebreak-row-controls";
+
+    const up = document.createElement("button");
+    up.className = "secondary";
+    up.textContent = "↑";
+    up.disabled = idx === 0;
+    up.onclick = () => moveInManualOrder(idx, -1);
+
+    const down = document.createElement("button");
+    down.className = "secondary";
+    down.textContent = "↓";
+    down.disabled = idx === ui.manualOrder.length - 1;
+    down.onclick = () => moveInManualOrder(idx, +1);
+
+    controls.appendChild(up);
+    controls.appendChild(down);
+
+    row.appendChild(name);
+    row.appendChild(controls);
+    list.appendChild(row);
+  });
+
+  panel.appendChild(list);
+
+  const actions = document.createElement("div");
+  actions.className = "row";
+
+  const save = document.createElement("button");
+  save.textContent = "Save tiebreak";
+  save.onclick = () => {
+    applyManualTiebreakToGroup(group.id, ui.manualOrder);
+    closeTiebreakPanel();
+  };
+
+  const cancel = document.createElement("button");
+  cancel.className = "secondary";
+  cancel.textContent = "Cancel";
+  cancel.onclick = closeTiebreakPanel;
+
+  actions.appendChild(save);
+  actions.appendChild(cancel);
+
+  panel.appendChild(actions);
+
+  return panel;
+}
 
 function renderGroupTiebreakControls(group, tiedSet) {
   const container = document.createElement("div");
@@ -1105,10 +1208,7 @@ function renderGroupTiebreakControls(group, tiedSet) {
 
   const btnManual = document.createElement("button");
   btnManual.textContent = "Resolve manually";
-  btnManual.onclick = () => {
-    // Placeholder – next step
-    console.log("Manual tiebreak selected for group", group.id, [...tiedSet]);
-  };
+  btnManual.onclick = () => openManualTiebreak(group.id, tiedSet);
 
   const row = document.createElement("div");
   row.className = "row";
@@ -1244,13 +1344,36 @@ function renderGroups() {
     el.appendChild(table);
 
     // Show tiebreak resolution controls only when needed
-    if (
-      isGroupDecided(g.id) &&
-      tiedSet.size > 0 &&
-      !g.tiebreak
-    ) {
+    const needsResolution = isGroupDecided(g.id) && tiedSet.size > 0 && !g.tiebreak;
+
+    if (needsResolution) {
       const controls = renderGroupTiebreakControls(g, tiedSet);
       el.appendChild(controls);
+    }
+    if (ui.activeGroupId === g.id && ui.mode === "manual") {
+      el.appendChild(renderManualTiebreakPanel(g));
+    }
+    if (g.tiebreak) {
+      const tb = document.createElement("div");
+      tb.className = "tiebreak-controls";
+
+      const msg = document.createElement("p");
+      msg.className = "muted";
+      msg.textContent = `Tiebreak applied (${g.tiebreak.type}).`;
+      tb.appendChild(msg);
+
+      const row = document.createElement("div");
+      row.className = "row";
+
+      const clear = document.createElement("button");
+      clear.className = "secondary";
+      clear.textContent = "Clear tiebreak";
+      clear.onclick = () => clearGroupTiebreak(g.id);
+
+      row.appendChild(clear);
+      tb.appendChild(row);
+
+      el.appendChild(tb);
     }
 
     host.appendChild(el);

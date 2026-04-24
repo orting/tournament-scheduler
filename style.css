@@ -389,6 +389,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 
 
+/* Tiebreaking */
 .tiebreak-controls {
   margin-top: 10px;
   padding: 10px;
@@ -404,5 +405,48 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 
 .tiebreak-controls button {
-  padding: 6px 10px;
+  padding: 6px 12px;
+}
+
+.tiebreak-panel {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.03);
+}
+
+.tiebreak-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.tiebreak-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.02);
+}
+
+.tiebreak-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tiebreak-row-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.table tr.tie-boundary td:first-child {
+  border-left: 3px solid rgba(255, 204, 102, 0.75);
+}
+
+.tiebreak-row:hover {
+  background: rgba(255,255,255,0.04);
 }
