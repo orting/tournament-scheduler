@@ -362,3 +362,28 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .round-matches {
   margin-top: 12px;        /* single, intentional offset below heading */
 }
+
+
+/* Highlight teams tied at a qualification boundary (only after group decided) */
+.table tr.tie-boundary td {
+  background: rgba(255, 204, 102, 0.10);
+}
+
+.table tr.tie-boundary td:first-child {
+  border-left: 3px solid rgba(255, 204, 102, 0.75);
+}
+
+.legend {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  font-size: 13px;
+  color: rgba(255,255,255,0.7);
+  margin-top: 8px;
+}
+.legend .swatch {
+  width: 14px;
+  height: 10px;
+  border-left: 3px solid rgba(255, 204, 102, 0.75);
+  background: rgba(255, 204, 102, 0.10);
+}

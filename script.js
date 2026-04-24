@@ -240,6 +240,96 @@ function alignBracketMatches() {
   }
 }
 
+/**
+ * Returns {G,K,q,r} where:
+ *  - G = number of groups
+ *  - K = total knockout spots (qualifierCount)
+ *  - q = floor(K/G) full ranks that qualify in every group
+ *  - r = remainder spots (K % G)
+ */
+function getQualificationParams() {
+  const G = state.groups?.length ?? 0;
+  const K = Math.min(state.qualifierCount ?? 0, state.participants?.length ?? 0);
+  const q = G > 0 ? Math.floor(K / G) : 0;
+  const r = G > 0 ? (K % G) : 0;
+  return { G, K, q, r };
+}
+
+/**
+ * Returns a Set(pid) of teams that are tied ACROSS a qualification boundary
+ * inside this group, but ONLY when the group is decided.
+ *
+ * Boundaries considered:
+ * 1) Between q and q+1 (guaranteed qualifier cutoff) when q >= 1
+ * 2) Between q+1 and q+2 (remainder-candidate cutoff) when r > 0
+ *
+ * "Tied across boundary" means the points value is equal on both sides
+ * of the boundary, so internal tiebreak resolution is required.
+ */
+function tiedAtQualificationBoundaries(groupId) {
+  if (!isGroupDecided(groupId)) return new Set();
+
+  const ranking = groupRanking(groupId);
+  const { q, r } = getQualificationParams();
+
+  // If group smaller than relevant boundary, nothing to do
+  if (!ranking || ranking.length === 0) return new Set();
+
+  const boundaries = [];
+  if (q >= 1) boundaries.push(q);
+  if (r > 0) boundaries.push(q + 1);
+
+  const tied = new Set();
+
+  for (const a of boundaries) {
+    // boundary at rank a splits [1..a] vs [a+1..]
+    const leftIdx = a - 1;
+    const rightIdx = a;
+
+    if (leftIdx < 0 || rightIdx >= ranking.length) continue;
+
+    // IMPORTANT: ranking entries must have a numeric "points"
+    // (in your app points==wins; groupRanking should already provide it)
+    const leftPts = ranking[leftIdx].points;
+    const rightPts = ranking[rightIdx].points;
+
+    if (leftPts == null || rightPts == null) continue;
+    if (leftPts !== rightPts) continue;
+
+    const pts = leftPts;
+
+    // Expand tie block around the boundary
+    let start = leftIdx;
+    let end = rightIdx;
+
+    while (start - 1 >= 0 && ranking[start - 1].points === pts) start--;
+    while (end + 1 < ranking.length && ranking[end + 1].points === pts) end++;
+
+    for (let i = start; i <= end; i++) {
+      tied.add(ranking[i].pid);
+    }
+  }
+
+  return tied;
+}
+
+
+function allBoundaryTiedPids() {
+  const tied = new Set();
+  for (const g of state.groups) {
+    if (!isGroupDecided(g.id)) continue;
+    const t = tiedAtQualificationBoundaries(g.id);
+    for (const pid of t) tied.add(pid);
+  }
+  return tied;
+}
+
+function groupStatus(groupId) {
+  if (!isGroupDecided(groupId)) return "in-progress";
+  const tied = tiedAtQualificationBoundaries(groupId);
+  return tied.size > 0 ? "undecided-tie" : "decided";
+}
+
 /* -----------------------------
    State
 ----------------------------- */
@@ -388,6 +478,74 @@ function remainingMatchesByPlayer(groupId) {
     }
   }
   return remaining;
+}
+
+/**
+ * Returns a Set of participant IDs who are GUARANTEED
+ * to make the knockout stage, regardless of remaining group matches.
+ */
+function clinchedQualifiers() {
+  const totalSlots = Math.min(state.qualifierCount, state.participants.length);
+  if (!state.groups.length) return new Set();
+
+  const standingsByGroup = computeStandingsByGroup();
+  const remainingByGroup = new Map(
+    state.groups.map(g => [g.id, remainingMatchesByPlayer(g.id)])
+  );
+
+  // Build player records
+  const players = [];
+  for (const g of state.groups) {
+    const standings = standingsByGroup.get(g.id);
+    const remaining = remainingByGroup.get(g.id);
+
+    for (const pid of g.memberIds) {
+      const wins = standings.get(pid).wins;
+      const remainingMatches = remaining.get(pid);
+      players.push({
+        pid,
+        wins,
+        maxWins: wins + remainingMatches
+      });
+    }
+  }
+
+  const qualified = new Set();
+
+  for (const candidate of players) {
+    // Worst case: candidate stays at current wins
+    const candidateWorstWins = candidate.wins;
+
+    // Count how many players could finish STRICTLY above candidate
+    let couldFinishAbove = 0;
+
+    for (const other of players) {
+      if (other === candidate) continue;
+
+      // In worst case, other overtakes candidate
+      if (other.maxWins > candidateWorstWins) {
+        couldFinishAbove++;
+      }
+    }
+
+    if (couldFinishAbove < totalSlots) {
+      qualified.add(candidate.pid);
+    }
+  }
+
+  return qualified;
+}
+
+function clinchedQualifiersExcludingBoundaryTies() {
+  const qualified = clinchedQualifiers(); // your existing function that returns Set(pid)
+
+  // If a group is decided and has a boundary-tie, nobody in that tie can be clinched.
+  for (const g of state.groups) {
+    if (!isGroupDecided(g.id)) continue;
+    const tied = tiedAtQualificationBoundaries(g.id);
+    for (const pid of tied) qualified.delete(pid);
+  }
+  return qualified;
 }
 
 /**
@@ -855,14 +1013,25 @@ function renderGroups() {
     });
     el.appendChild(pills);
 
-    const decided = isGroupDecided(g.id);
+    const status = groupStatus(g.id);
     const badge = document.createElement("p");
     badge.className = "muted";
-    badge.textContent = decided ? "Group decided ✅" : "Group in progress…";
+
+    if (status === "decided") {
+      badge.textContent = "✅ Group decided";
+    } else if (status === "undecided-tie") {
+      badge.textContent = "⚠️ Group undecided (tie at qualification boundary)";
+    } else {
+      badge.textContent = "Group in progress…";
+    }
     el.appendChild(badge);
 
+    const tiedSet = tiedAtQualificationBoundaries(g.id);
     const ranking = groupRanking(g.id);
-    const clinched = clinchedRanksForGroup(g.id);
+    const boundaryTied = allBoundaryTiedPids();
+    const qualifiedSet = new Set(
+      [...clinchedQualifiers()].filter(pid => !boundaryTied.has(pid))
+    );
     const table = document.createElement("table");
     table.className = "table";
     table.innerHTML = `
@@ -872,10 +1041,12 @@ function renderGroups() {
       <tbody>
         ${ranking.map((r, i) => {
           const rank = i + 1;
-          const isClinched = clinched.get(rank) === r.pid;
+          const isQualified = qualifiedSet.has(r.pid);
+          const isTied = tiedSet.has(r.pid);
+          const marker = isTied ? " ⚠️" : (isQualified ? " ✅" : "");
           return `
-            <tr ${isClinched ? 'style="font-weight:600;"' : ""}>
-              <td>${rank}${isClinched ? " ✅" : ""}</td>
+            <tr class="${isTied ? "tie-boundary" : ""}">
+	      <td>${rank}${marker}</td>
               <td>${escapeHtml(r.name)}</td>
               <td>${r.wins}</td>
               <td>${r.losses}</td>
