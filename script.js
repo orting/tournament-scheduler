@@ -578,6 +578,7 @@ function defaultState() {
     knockout: null,
     crossGroupTiebreak: null,
     qualifierCount: 0, // will be set to participants.length later
+    stageMode: "groups" // "groups" | "direct"
   };
 }
 
@@ -874,6 +875,9 @@ function headToHeadWinner(aPid, bPid, groupId) {
  * seedRef = { groupId, rank } where rank starts at 1.
  */
 function computeSeedRefsTotal() {
+  // ✅ Direct bracket mode does not use group seeds
+  if (state.stageMode === "direct") return [];
+
   const { q, r } = getQualificationParams();
   if (!state.groups.length) return [];
 
@@ -1045,12 +1049,15 @@ function buildKnockoutFromSeeds(seeds) {
 function competitorPid(ko, side) {
   if (!side) return null;
 
-  // seedRef: {groupId, rank}
+  // ✅ Direct participant seed
+  if (side.pid) return side.pid;
+
+  // Group seed
   if (side.groupId && side.rank) {
     return resolveSeedPid(side);
   }
 
-  // fromMatch: {fromMatchId:"..."}
+  // Flow from previous match
   if (side.fromMatchId) {
     const found = findMatchById(ko, side.fromMatchId);
     return found?.winnerPid ?? null;
@@ -1170,6 +1177,27 @@ function seedOrFlowLabel(ko, side) {
 /* -----------------------------
    Actions (Workflow)
 ----------------------------- */
+
+function createDirectBracket() {
+  if (state.participants.length < 2) return;
+
+  // Clear group-related state
+  state.groups = [];
+  state.groupMatches = [];
+  state.crossGroupTiebreak = null;
+
+  state.stageMode = "direct";
+
+  // ✅ Randomize participants before building bracket
+  const shuffled = shuffle(state.participants.map(p => p.id));
+  const seeds = shuffled.map(pid => ({ pid }));
+
+  state.knockout = buildKnockoutFromSeeds(seeds);
+
+  saveState();
+  renderAll();
+}
+
 function createGroupsAndBracket() {
   const groupCount = parseInt($("groupCountInput")?.value ?? "1", 10);
   if (groupCount < 1) return;
@@ -1966,6 +1994,7 @@ function renderAll() {
 safeOn("resetBtn", "click", resetState);
 safeOn("saveBtn", "click", saveState);
 safeOn("createGroupsBtn", "click", createGroupsAndBracket);
+safeOn("createBracketOnlyBtn", "click", createDirectBracket);
 safeOn("addParticipantBtn", "click", () => {
   state.participants.push({
     id: uid(),
